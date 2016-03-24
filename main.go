@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Sun 03 Jan 2016 12:00:48 PM PST
+* Last Modified : Tue 08 Mar 2016 12:12:23 PM PST
 
 * Created By : Kiyor
 
@@ -15,6 +15,7 @@ _._._._._._._._._._._._._._._._._._._._._.*/
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -25,13 +26,13 @@ import (
 	"strings"
 )
 
-var dir = "."
-var port = ":30000"
+var (
+	fdir  *string = flag.String("d", ".", "Mount Dir")
+	fport *string = flag.String("p", ":30000", "Listening Port")
+)
 
 func init() {
-	if len(os.Args) > 1 {
-		dir = os.Args[1]
-	}
+	flag.Parse()
 }
 
 func getips() string {
@@ -43,7 +44,7 @@ func getips() string {
 	for _, v := range ips {
 		ip := strings.Split(v.String(), "/")[0]
 		if ip != "127.0.0.1" {
-			s += strings.Split(v.String(), "/")[0] + port + " "
+			s += strings.Split(v.String(), "/")[0] + *fport + " "
 		}
 	}
 	return s
@@ -55,7 +56,7 @@ func main() {
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Add("Cache-Control", "no-cache")
 		if req.Method == "GET" {
-			f := &fileHandler{http.Dir(dir)}
+			f := &fileHandler{http.Dir(*fdir)}
 			f.ServeHTTP(w, req)
 		} else if req.Method == "POST" {
 			uploadHandler(w, req)
@@ -64,11 +65,11 @@ func main() {
 	})
 
 	log.Println("Listening on", getips())
-	http.ListenAndServe(port, mux)
+	http.ListenAndServe(*fport, mux)
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
-	p := dir + "/" + r.URL.Path
+	p := *fdir + "/" + r.URL.Path
 	d, _ := filepath.Split(p)
 
 	f, err := os.Open(d)
