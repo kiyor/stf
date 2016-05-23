@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Tue 08 Mar 2016 12:12:23 PM PST
+* Last Modified : Mon 23 May 2016 12:52:07 PM PDT
 
 * Created By : Kiyor
 
@@ -24,15 +24,30 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 var (
-	fdir  *string = flag.String("d", ".", "Mount Dir")
-	fport *string = flag.String("p", ":30000", "Listening Port")
+	fdir    *string = flag.String("d", ".", "Mount Dir")
+	fport   *string = flag.String("p", ":30000", "Listening Port")
+	version *bool   = flag.Bool("v", false, "output version and exit")
+
+	timeout *time.Duration = flag.Duration("timeout", 5*time.Minute, "timeout")
+
+	ch        = make(chan bool)
+	wg        = new(sync.WaitGroup)
+	stop      bool
+	buildtime string
+	VER       = "1.0"
 )
 
 func init() {
 	flag.Parse()
+	if *version {
+		fmt.Printf("%v.%v", VER, buildtime)
+		os.Exit(0)
+	}
 }
 
 func getips() string {
@@ -54,6 +69,12 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		if stop {
+			return
+		}
+		wg.Add(1)
+		defer wg.Done()
+		ch <- true
 		w.Header().Add("Cache-Control", "no-cache")
 		if req.Method == "GET" {
 			f := &fileHandler{http.Dir(*fdir)}
@@ -65,7 +86,28 @@ func main() {
 	})
 
 	log.Println("Listening on", getips())
-	http.ListenAndServe(*fport, mux)
+	done := make(chan bool)
+
+	go http.ListenAndServe(*fport, mux)
+	t := time.Tick(*timeout)
+	go func() {
+		for {
+			select {
+			case <-t:
+				log.Println(os.Args[0], "auto stop, no more request accessable")
+				stop = true
+				wg.Wait()
+				done <- true
+			case <-ch:
+				t = time.Tick(*timeout)
+			}
+		}
+	}()
+
+	if <-done {
+		log.Println("stop")
+		os.Exit(0)
+	}
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
