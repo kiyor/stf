@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Mon 23 May 2016 12:52:07 PM PDT
+* Last Modified : Wed 25 May 2016 03:53:59 PM PDT
 
 * Created By : Kiyor
 
@@ -79,7 +79,7 @@ func main() {
 		if req.Method == "GET" {
 			f := &fileHandler{http.Dir(*fdir)}
 			f.ServeHTTP(w, req)
-		} else if req.Method == "POST" {
+		} else if req.Method == "POST" || req.Method == "PUT" {
 			uploadHandler(w, req)
 		}
 		log.Println(req.Method, req.URL.Path)
@@ -111,6 +111,7 @@ func main() {
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
+
 	p := *fdir + "/" + r.URL.Path
 	d, _ := filepath.Split(p)
 
