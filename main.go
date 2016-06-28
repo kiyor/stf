@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Mon 27 Jun 2016 06:57:37 PM PDT
+* Last Modified : Mon 27 Jun 2016 10:37:50 PM PDT
 
 * Created By : Kiyor
 
@@ -30,11 +30,10 @@ import (
 )
 
 var (
-	fdir      *string = flag.String("d", ".", "Mount Dir")
-	fport     *string = flag.String("p", ":30000", "Listening Port")
-	upstream  *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
-	version   *bool   = flag.Bool("v", false, "output version and exit")
-	unwrapTLS         = flag.Bool("unwrap-tls", false, "remote connection with TLS exposed unencrypted locally")
+	fdir     *string = flag.String("d", ".", "Mount Dir")
+	fport    *string = flag.String("p", ":30000", "Listening Port")
+	upstream *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
+	version  *bool   = flag.Bool("v", false, "output version and exit")
 
 	tcp bool
 
