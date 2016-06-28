@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Wed 25 May 2016 03:53:59 PM PDT
+* Last Modified : Mon 27 Jun 2016 06:57:37 PM PDT
 
 * Created By : Kiyor
 
@@ -15,6 +15,7 @@ _._._._._._._._._._._._._._._._._._._._._.*/
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"io"
@@ -29,11 +30,22 @@ import (
 )
 
 var (
-	fdir    *string = flag.String("d", ".", "Mount Dir")
-	fport   *string = flag.String("p", ":30000", "Listening Port")
-	version *bool   = flag.Bool("v", false, "output version and exit")
+	fdir      *string = flag.String("d", ".", "Mount Dir")
+	fport     *string = flag.String("p", ":30000", "Listening Port")
+	upstream  *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
+	version   *bool   = flag.Bool("v", false, "output version and exit")
+	unwrapTLS         = flag.Bool("unwrap-tls", false, "remote connection with TLS exposed unencrypted locally")
+
+	tcp bool
 
 	timeout *time.Duration = flag.Duration("timeout", 5*time.Minute, "timeout")
+
+	proxyClient = http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	proxyMethod = false
 
 	ch        = make(chan bool)
 	wg        = new(sync.WaitGroup)
@@ -48,6 +60,19 @@ func init() {
 		fmt.Printf("%v.%v", VER, buildtime)
 		os.Exit(0)
 	}
+	if *upstream != "scheme://ip:port or ip:port" {
+		proxyMethod = true
+		u := *upstream
+		if u[:4] != "http" {
+			tcp = true
+		}
+	}
+	p := *fport
+	if p[:1] != ":" {
+		p = ":" + p
+		fport = &p
+	}
+
 }
 
 func getips() string {
@@ -73,8 +98,20 @@ func main() {
 			return
 		}
 		wg.Add(1)
+		t1 := time.Now()
 		defer wg.Done()
+		defer func() {
+			if proxyMethod {
+				log.Println(req.Method, req.URL.Path, NanoToSecond(time.Since(t1)), w.Header().Get("X-Upstream-Response-Time"))
+			} else {
+				log.Println(req.Method, req.URL.Path, NanoToSecond(time.Since(t1)), "-")
+			}
+		}()
 		ch <- true
+		if proxyMethod {
+			proxyHandler(w, req)
+			return
+		}
 		w.Header().Add("Cache-Control", "no-cache")
 		if req.Method == "GET" {
 			f := &fileHandler{http.Dir(*fdir)}
@@ -82,13 +119,21 @@ func main() {
 		} else if req.Method == "POST" || req.Method == "PUT" {
 			uploadHandler(w, req)
 		}
-		log.Println(req.Method, req.URL.Path)
 	})
 
 	log.Println("Listening on", getips())
+	if proxyMethod {
+		log.Println("Upstream", *upstream, "tcp", tcp)
+	}
+
 	done := make(chan bool)
 
-	go http.ListenAndServe(*fport, mux)
+	if tcp {
+		go tcpProxy()
+	} else {
+		go http.ListenAndServe(*fport, mux)
+	}
+
 	t := time.Tick(*timeout)
 	go func() {
 		for {
@@ -108,6 +153,30 @@ func main() {
 		log.Println("stop")
 		os.Exit(0)
 	}
+}
+
+func proxyHandler(w http.ResponseWriter, r *http.Request) {
+	req, _ := http.NewRequest(r.Method, *upstream+r.URL.Path, r.Body)
+	t1 := time.Now()
+	resp, err := proxyClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(w, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		for _, v1 := range v {
+			w.Header().Set(k, v1)
+		}
+	}
+	w.Header().Set("X-Upstream-Response-Time", NanoToSecond(time.Since(t1)))
+
+	io.Copy(w, resp.Body)
+}
+
+func NanoToSecond(d time.Duration) string {
+	return fmt.Sprintf("%.3f", float64(d.Nanoseconds())/1000000)
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
