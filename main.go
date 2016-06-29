@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Mon 27 Jun 2016 10:37:50 PM PDT
+* Last Modified : Tue 28 Jun 2016 09:55:01 PM PDT
 
 * Created By : Kiyor
 
@@ -33,7 +33,7 @@ var (
 	fdir     *string = flag.String("d", ".", "Mount Dir")
 	fport    *string = flag.String("p", ":30000", "Listening Port")
 	upstream *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
-	version  *bool   = flag.Bool("v", false, "output version and exit")
+	version  *bool   = flag.Bool("version", false, "output version and exit")
 
 	tcp bool
 

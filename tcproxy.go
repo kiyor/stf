@@ -6,7 +6,7 @@
 
 * Creation Date : 06-27-2016
 
-* Last Modified : Tue 28 Jun 2016 04:38:12 PM PDT
+* Last Modified : Tue 28 Jun 2016 09:54:05 PM PDT
 
 * Created By : Kiyor
 
@@ -26,11 +26,17 @@ import (
 )
 
 var (
-	connid    = uint64(0)
-	matchid   = uint64(0)
-	unwrapTLS = flag.Bool("unwrap-tls", false, "remote connection with TLS exposed unencrypted locally")
-	match     = flag.String("match", "", "match regex (in the form 'regex')")
-	replace   = flag.String("replace", "", "replace regex (in the form '/regex1/replacer1/regex2/replace2/' if / is delimiter)")
+	connid  = uint64(0)
+	matchid = uint64(0)
+
+	verbose     = flag.Bool("v", false, "display server actions")
+	veryverbose = flag.Bool("vv", false, "display server actions and all tcp data")
+	nagles      = flag.Bool("n", false, "disable nagles algorithm")
+	hex         = flag.Bool("h", false, "output hex")
+	colors      = flag.Bool("c", false, "output ansi colors")
+	unwrapTLS   = flag.Bool("unwrap-tls", false, "remote connection with TLS exposed unencrypted locally")
+	match       = flag.String("match", "", "match regex (in the form 'regex')")
+	replace     = flag.String("replace", "", "replace regex (in the form '/regex1/replacer1/regex2/replace2/' if / is delimiter)")
 )
 
 func tcpProxy() {
@@ -53,6 +59,10 @@ func tcpProxy() {
 
 	matcher := createMatcher(*match)
 	replacer := createReplacer(*replace)
+
+	if *veryverbose {
+		*verbose = true
+	}
 
 	for {
 		conn, err := listener.AcceptTCP()
@@ -77,10 +87,10 @@ func tcpProxy() {
 		p.Replacer = replacer
 
 		p.Log = proxy.ColorLogger{
-			Verbose:     false,
-			VeryVerbose: false,
+			Verbose:     *verbose,
+			VeryVerbose: *veryverbose,
 			Prefix:      fmt.Sprintf("Connection #%03d ", connid),
-			Color:       false,
+			Color:       *colors,
 		}
 
 		go p.Start(wg)
