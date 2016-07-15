@@ -6,7 +6,7 @@
 
 * Creation Date : 06-27-2016
 
-* Last Modified : Tue 28 Jun 2016 09:54:05 PM PDT
+* Last Modified : Thu 30 Jun 2016 02:37:00 PM PDT
 
 * Created By : Kiyor
 
@@ -89,7 +89,7 @@ func tcpProxy() {
 		p.Log = proxy.ColorLogger{
 			Verbose:     *verbose,
 			VeryVerbose: *veryverbose,
-			Prefix:      fmt.Sprintf("Connection #%03d ", connid),
+			Prefix:      fmt.Sprintf("%s #%03d ", conn.RemoteAddr().String(), connid),
 			Color:       *colors,
 		}
 

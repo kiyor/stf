@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Tue 28 Jun 2016 09:55:01 PM PDT
+* Last Modified : Thu 30 Jun 2016 05:40:02 PM PDT
 
 * Created By : Kiyor
 
@@ -18,10 +18,12 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"github.com/wsxiaoys/terminal/color"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +36,8 @@ var (
 	fport    *string = flag.String("p", ":30000", "Listening Port")
 	upstream *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
 	version  *bool   = flag.Bool("version", false, "output version and exit")
+
+	rt = flag.Int("return", -1, "debug test return code")
 
 	tcp bool
 
@@ -100,15 +104,29 @@ func main() {
 		t1 := time.Now()
 		defer wg.Done()
 		defer func() {
+			var res string
 			if proxyMethod {
-				log.Println(req.Method, req.URL.Path, NanoToSecond(time.Since(t1)), w.Header().Get("X-Upstream-Response-Time"))
+				res = fmt.Sprintf("%v %v %v %v", req.Method, req.URL.Path, NanoToSecond(time.Since(t1)), w.Header().Get("X-Upstream-Response-Time"))
 			} else {
-				log.Println(req.Method, req.URL.Path, NanoToSecond(time.Since(t1)), "-")
+				res = fmt.Sprintf("%v %v %v %v", req.Method, req.URL.Path, NanoToSecond(time.Since(t1)), "-")
+			}
+			if *colors {
+				log.Println(color.Sprintf("@{g}%s", res))
+			} else {
+				log.Println(res)
+			}
+			if *veryverbose {
+				dumpRequest(req, true, true)
 			}
 		}()
 		ch <- true
 		if proxyMethod {
 			proxyHandler(w, req)
+			return
+		}
+		if *rt != -1 {
+			w.WriteHeader(*rt)
+			w.Write(dumpRequest(req, true, false))
 			return
 		}
 		w.Header().Add("Cache-Control", "no-cache")
@@ -152,6 +170,21 @@ func main() {
 		log.Println("stop")
 		os.Exit(0)
 	}
+}
+
+func dumpRequest(r *http.Request, b, p bool) []byte {
+	dump, err := httputil.DumpRequest(r, b)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	if p {
+		if *colors {
+			color.Printf("@{b}%s@{|}", string(dump))
+		} else {
+			fmt.Print(string(dump))
+		}
+	}
+	return dump
 }
 
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
