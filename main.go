@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Thu 30 Jun 2016 05:40:02 PM PDT
+* Last Modified : Thu 28 Jul 2016 11:33:29 AM PDT
 
 * Created By : Kiyor
 
@@ -16,8 +16,10 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/armon/go-socks5"
 	"github.com/wsxiaoys/terminal/color"
 	"io"
 	"log"
@@ -35,11 +37,20 @@ var (
 	fdir     *string = flag.String("d", ".", "Mount Dir")
 	fport    *string = flag.String("p", ":30000", "Listening Port")
 	upstream *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
-	version  *bool   = flag.Bool("version", false, "output version and exit")
+
+	sock *bool = flag.Bool("socks5", false, "socks5 mode")
+
+	bridge               *string = flag.String("bridge", "host/ip/host:ip", "quick setup http/+https proxy with upstream 80/+443")
+	crt                  *string = flag.String("crt", "", "crt location if using brdige mode")
+	key                  *string = flag.String("key", "", "key location if using brdige mode")
+	bridgeIp, bridgeHost string
+
+	version *bool = flag.Bool("version", false, "output version and exit")
 
 	rt = flag.Int("return", -1, "debug test return code")
 
-	tcp bool
+	tcp      bool
+	isbridge bool
 
 	timeout *time.Duration = flag.Duration("timeout", 5*time.Minute, "timeout")
 
@@ -69,6 +80,21 @@ func init() {
 		if u[:4] != "http" {
 			tcp = true
 		}
+	}
+	if *bridge != "host/ip/host:ip" {
+		isbridge = true
+		proxyMethod = true
+		p := strings.Split(*bridge, ":")
+		if len(p) > 1 {
+			bridgeHost = p[0]
+			bridgeIp = p[1]
+		} else {
+			if ip := net.ParseIP(*bridge); ip == nil {
+				bridgeHost = *bridge
+			}
+			bridgeIp = *bridge
+		}
+		*upstream = *bridge
 	}
 	p := *fport
 	if p[:1] != ":" {
@@ -106,9 +132,9 @@ func main() {
 		defer func() {
 			var res string
 			if proxyMethod {
-				res = fmt.Sprintf("%v %v %v %v", req.Method, req.URL.Path, NanoToSecond(time.Since(t1)), w.Header().Get("X-Upstream-Response-Time"))
+				res = fmt.Sprintf("%v %v %v %v %v", req.RemoteAddr, req.Method, req.URL.String(), NanoToSecond(time.Since(t1)), w.Header().Get("X-Upstream-Response-Time"))
 			} else {
-				res = fmt.Sprintf("%v %v %v %v", req.Method, req.URL.Path, NanoToSecond(time.Since(t1)), "-")
+				res = fmt.Sprintf("%v %v %v %v %v", req.RemoteAddr, req.Method, req.URL.String(), NanoToSecond(time.Since(t1)), "-")
 			}
 			if *colors {
 				log.Println(color.Sprintf("@{g}%s", res))
@@ -121,7 +147,15 @@ func main() {
 		}()
 		ch <- true
 		if proxyMethod {
-			proxyHandler(w, req)
+			if isbridge {
+				scheme := "https"
+				if req.TLS == nil {
+					scheme = "http"
+				}
+				proxyHandler(w, req, fmt.Sprintf("%s://%s", scheme, bridgeIp))
+			} else {
+				proxyHandler(w, req, *upstream)
+			}
 			return
 		}
 		if *rt != -1 {
@@ -145,10 +179,29 @@ func main() {
 
 	done := make(chan bool)
 
-	if tcp {
+	if *sock {
+		go func() {
+			conf := &socks5.Config{}
+			server, err := socks5.New(conf)
+			if err != nil {
+				panic(err)
+			}
+
+			if err := server.ListenAndServe("tcp", *fport); err != nil {
+				panic(err)
+			}
+		}()
+	} else if tcp {
 		go tcpProxy()
 	} else {
-		go http.ListenAndServe(*fport, mux)
+		if !isbridge {
+			go http.ListenAndServe(*fport, mux)
+		} else {
+			go http.ListenAndServe(":80", mux)
+			if len(*crt) > 0 && len(*key) > 0 {
+				go http.ListenAndServeTLS(":443", *crt, *key, mux)
+			}
+		}
 	}
 
 	t := time.Tick(*timeout)
@@ -172,6 +225,14 @@ func main() {
 	}
 }
 
+func Json(i interface{}) string {
+	b, err := json.MarshalIndent(i, "", "  ")
+	if err != nil {
+		log.Println(err.Error())
+	}
+	return string(b)
+}
+
 func dumpRequest(r *http.Request, b, p bool) []byte {
 	dump, err := httputil.DumpRequest(r, b)
 	if err != nil {
@@ -187,8 +248,26 @@ func dumpRequest(r *http.Request, b, p bool) []byte {
 	return dump
 }
 
-func proxyHandler(w http.ResponseWriter, r *http.Request) {
-	req, _ := http.NewRequest(r.Method, *upstream+r.URL.Path, r.Body)
+func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
+	var path string
+	var host string
+	if strings.Contains(r.URL.String(), "http") {
+		path = r.URL.String()
+		host = r.URL.Host
+	} else {
+		path = upper + r.URL.Path
+		host = r.Host
+	}
+	req, err := http.NewRequest(r.Method, path, r.Body)
+	if err != nil {
+		panic(err)
+	}
+	if len(bridgeHost) > 0 {
+		req.Host = bridgeHost
+	}
+	if ip := net.ParseIP(r.Host); ip == nil {
+		req.Host = host
+	}
 	t1 := time.Now()
 	resp, err := proxyClient.Do(req)
 	if err != nil {
