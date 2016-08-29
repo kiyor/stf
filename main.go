@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Sun 28 Aug 2016 03:43:35 AM UTC
+* Last Modified : Mon 29 Aug 2016 07:03:52 PM UTC
 
 * Created By : Kiyor
 
@@ -198,11 +198,19 @@ func main() {
 		go tcpProxy()
 	} else {
 		if !isbridge {
-			go func() {
-				if err := http.ListenAndServe(*fport, mux); err != nil {
-					panic(err)
-				}
-			}()
+			if len(*crt) > 0 && len(*key) > 0 {
+				go func() {
+					if err := http.ListenAndServeTLS(*fport, *crt, *key, mux); err != nil {
+						panic(err)
+					}
+				}()
+			} else {
+				go func() {
+					if err := http.ListenAndServe(*fport, mux); err != nil {
+						panic(err)
+					}
+				}()
+			}
 		} else {
 			go func() {
 				if err := http.ListenAndServe(":80", mux); err != nil {
