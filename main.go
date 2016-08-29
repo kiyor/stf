@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Thu 28 Jul 2016 06:08:09 PM PDT
+* Last Modified : Sun 28 Aug 2016 03:43:35 AM UTC
 
 * Created By : Kiyor
 
@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/armon/go-socks5"
+	"github.com/kiyor/go-socks5"
 	"github.com/wsxiaoys/terminal/color"
 	"io"
 	"log"
@@ -52,7 +52,8 @@ var (
 	tcp      bool
 	isbridge bool
 
-	timeout *time.Duration = flag.Duration("timeout", 5*time.Minute, "timeout")
+	timeout   *time.Duration = flag.Duration("timeout", 5*time.Minute, "timeout")
+	notimeout                = flag.Bool("notimeout", false, "no timeout")
 
 	proxyClient = http.Client{
 		Transport: &http.Transport{
@@ -182,6 +183,8 @@ func main() {
 	if *sock {
 		go func() {
 			conf := &socks5.Config{}
+			conf.Resolver = new(Resolver)
+			conf.Rewriter = new(Rewriter)
 			server, err := socks5.New(conf)
 			if err != nil {
 				panic(err)
@@ -216,6 +219,9 @@ func main() {
 		}
 	}
 
+	if *notimeout {
+		*timeout = time.Duration(time.Hour * 24 * 365 * 10)
+	}
 	t := time.Tick(*timeout)
 	go func() {
 		for {
