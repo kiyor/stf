@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Mon 29 Aug 2016 07:03:52 PM UTC
+* Last Modified : Fri 09 Sep 2016 06:14:28 PM UTC
 
 * Created By : Kiyor
 
@@ -15,19 +15,26 @@ _._._._._._._._._._._._._._._._._._._._._.*/
 package main
 
 import (
+	// 	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/dustin/go-humanize"
 	"github.com/kiyor/go-socks5"
 	"github.com/wsxiaoys/terminal/color"
 	"io"
+	"io/ioutil"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +45,10 @@ var (
 	fport    *string = flag.String("p", ":30000", "Listening Port")
 	upstream *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
 
-	sock *bool = flag.Bool("socks5", false, "socks5 mode")
+	sock       *bool = flag.Bool("socks5", false, "socks5 mode")
+	uploadonly *bool = flag.Bool("uploadonly", false, "upload only POST/PUT")
+
+	testFile *bool = flag.Bool("testfile", false, "testfile, /1(K/M/G)")
 
 	bridge               *string = flag.String("bridge", "host/ip/host:ip", "quick setup http/+https proxy with upstream 80/+443")
 	crt                  *string = flag.String("crt", "", "crt location if using brdige mode")
@@ -62,11 +72,15 @@ var (
 	}
 	proxyMethod = false
 
+	reTestFile = regexp.MustCompile(`(\d+)(b|B|k|K|m|M|g|G)(.*)`)
+
 	ch        = make(chan bool)
 	wg        = new(sync.WaitGroup)
 	stop      bool
 	buildtime string
 	VER       = "1.0"
+	bt        = make([]byte, 1024)
+	serveByte uint64
 )
 
 func init() {
@@ -120,7 +134,37 @@ func getips() string {
 	return s
 }
 
+func byteCounter() {
+	ticker := time.Tick(time.Second)
+	var total uint64
+	var max uint64
+	var avg uint64
+	var emptySecond float64
+	t1 := time.Now()
+	defer fmt.Println()
+	for {
+		<-ticker
+		total += serveByte
+		if serveByte == 0 {
+			emptySecond += 1.0
+		} else if serveByte > max {
+			max = serveByte
+		}
+		if uint64(time.Since(t1).Seconds()-emptySecond) > 0 {
+			avg = total / uint64(time.Since(t1).Seconds()-emptySecond)
+		}
+		fmt.Printf("\rspeed: %10v/s  total: %10v  max: %10v/s  avg: %10v/s", humanize.Bytes(serveByte), humanize.Bytes(total), humanize.Bytes(max), humanize.Bytes(avg))
+		serveByte = 0
+	}
+}
+
 func main() {
+
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
+	if *testFile {
+		go byteCounter()
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
@@ -164,10 +208,14 @@ func main() {
 			w.Write(dumpRequest(req, true, false))
 			return
 		}
-		w.Header().Add("Cache-Control", "no-cache")
-		if req.Method == "GET" {
+		// 		w.Header().Add("Cache-Control", "no-cache")
+		w.Header().Add("Connection", "Keep-Alive")
+		if req.Method == "GET" && !*uploadonly && !*testFile {
+			w.Header().Add("Cache-Control", "no-cache")
 			f := &fileHandler{http.Dir(*fdir)}
 			f.ServeHTTP(w, req)
+		} else if *testFile {
+			testFileHandler(w, req)
 		} else if req.Method == "POST" || req.Method == "PUT" {
 			uploadHandler(w, req)
 		}
@@ -176,6 +224,9 @@ func main() {
 	log.Println("Listening on", getips())
 	if proxyMethod {
 		log.Println("Upstream", *upstream, "tcp", tcp)
+	}
+	if *testFile {
+		log.SetOutput(ioutil.Discard)
 	}
 
 	done := make(chan bool)
@@ -358,4 +409,60 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Fprintf(w, "File uploaded successfully : %s\n", p)
+}
+
+func testFileHandler(w http.ResponseWriter, r *http.Request) {
+	if reTestFile.MatchString(r.URL.Path) {
+		iStr := reTestFile.FindStringSubmatch(r.URL.Path)[1]
+		l, err := strconv.Atoi(iStr)
+		if err != nil {
+			return
+		}
+		s := reTestFile.FindStringSubmatch(r.URL.Path)[2]
+		if len(reTestFile.FindStringSubmatch(r.URL.Path)) > 3 {
+			ext := mime.TypeByExtension(reTestFile.FindStringSubmatch(r.URL.Path)[3])
+			if len(ext) > 0 {
+				w.Header().Set("Content-Type", ext)
+			}
+		}
+		switch s {
+		case "b", "B":
+			w.Header().Set("Content-Length", strconv.Itoa(l))
+			b := make([]byte, l)
+			x, _ := w.Write(b)
+			serveByte += uint64(x)
+		case "k", "K":
+			w.Header().Set("Content-Length", strconv.Itoa(l*1024))
+			for i := 0; i < l; i++ {
+				x, _ := w.Write(bt)
+				serveByte += uint64(x)
+			}
+		case "m", "M":
+			w.Header().Set("Content-Length", strconv.Itoa(l*1024*1024))
+			// 			var d uint64
+			for i := 0; i < l; i++ {
+				for j := 0; j < 1024; j++ {
+					x, _ := w.Write(bt)
+					// 					d += uint64(x)
+					serveByte += uint64(x)
+				}
+				// 				fmt.Printf("\r%10v", humanize.Bytes(d))
+			}
+			// 			fmt.Printf("\r")
+		case "g", "G":
+			w.Header().Set("Content-Length", strconv.Itoa(l*1024*1024*1024))
+			// 			var d uint64
+			for i := 0; i < l; i++ {
+				for j := 0; j < 1024; j++ {
+					for k := 0; k < 1024; k++ {
+						x, _ := w.Write(bt)
+						// 						d += uint64(x)
+						serveByte += uint64(x)
+					}
+					// 					fmt.Printf("\r%10v", humanize.Bytes(d))
+				}
+			}
+			// 			fmt.Printf("\r")
+		}
+	}
 }
