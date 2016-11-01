@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Fri 09 Sep 2016 06:14:28 PM UTC
+* Last Modified : Tue 01 Nov 2016 12:01:12 AM UTC
 
 * Created By : Kiyor
 
@@ -15,7 +15,8 @@ _._._._._._._._._._._._._._._._._._._._._.*/
 package main
 
 import (
-	// 	"bytes"
+	"bytes"
+	// 	"compress/gzip"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
@@ -47,6 +48,7 @@ var (
 
 	sock       *bool = flag.Bool("socks5", false, "socks5 mode")
 	uploadonly *bool = flag.Bool("uploadonly", false, "upload only POST/PUT")
+	showBody   *bool = flag.Bool("body", false, "show body")
 
 	testFile *bool = flag.Bool("testfile", false, "testfile, /1(K/M/G)")
 
@@ -117,6 +119,8 @@ func init() {
 		fport = &p
 	}
 
+	log.SetFlags(19)
+
 }
 
 func getips() string {
@@ -173,6 +177,9 @@ func main() {
 		}
 		wg.Add(1)
 		t1 := time.Now()
+		if *veryverbose {
+			dumpRequest(req, true, true)
+		}
 		defer wg.Done()
 		defer func() {
 			var res string
@@ -185,9 +192,6 @@ func main() {
 				log.Println(color.Sprintf("@{g}%s", res))
 			} else {
 				log.Println(res)
-			}
-			if *veryverbose {
-				dumpRequest(req, true, true)
 			}
 		}()
 		ch <- true
@@ -203,9 +207,10 @@ func main() {
 			}
 			return
 		}
+		// if not just return code
 		if *rt != -1 {
 			w.WriteHeader(*rt)
-			w.Write(dumpRequest(req, true, false))
+			dumpRequest(req, true, true)
 			return
 		}
 		// 		w.Header().Add("Cache-Control", "no-cache")
@@ -310,16 +315,123 @@ func Json(i interface{}) string {
 	return string(b)
 }
 
+// dump request , body true/false, print true/false
 func dumpRequest(r *http.Request, b, p bool) []byte {
 	dump, err := httputil.DumpRequest(r, b)
 	if err != nil {
 		log.Println(err.Error())
 	}
+	// 	isGzip := false
+	// 	if v, ok := r.Header["Accept-Encoding"]; ok {
+	// 		if strings.Contains(v[0], "gzip") {
+	// 			isGzip = true
+	// 			log.Println("is gzip")
+	// 		}
+	// 	}
 	if p {
+		index := bytes.Index(dump, []byte("\r\n\r\n"))
+		headers := dump[:index]
+		body := bytes.TrimLeft(dump[index:], "\r\n\r\n")
+		// 		body = bytes.TrimLeft(body, string([]byte{13, 10, 13, 10}))
+		// 		if isGzip {
+		// 			reader := bytes.NewReader(body)
+		// 			g, err := gzip.NewReader(reader)
+		// 			if err != nil {
+		// 				log.Println(err.Error())
+		// 			}
+		// 			body, err = ioutil.ReadAll(g)
+		// 			if err != nil {
+		// 				log.Println(err.Error())
+		// 			}
+		// 		}
+		if *veryverbose {
+			now := time.Now()
+			host := "_"
+			for _, v := range strings.Split(string(headers), "\n") {
+				if len(v) > 5 && strings.ToUpper(v[:5]) == "HOST:" {
+					host = strings.Split(v, " ")[1]
+					host = strings.Trim(host, "\r")
+				}
+			}
+			dirname := "/tmp/stfdump/" + host
+			if _, err := os.Stat(dirname); err != nil {
+				if err := os.MkdirAll(dirname, 0755); err != nil {
+					log.Fatalln(err.Error())
+				}
+			}
+			filename := fmt.Sprintf("%s/%d>", dirname, now.UnixNano())
+			ioutil.WriteFile(filename, body, 0644)
+		}
 		if *colors {
-			color.Printf("@{b}%s@{|}", string(dump))
+			// 			color.Printf("@{b}%s@{|}", string(dump))
+			color.Printf("@{b}%v@{|}\n", string(headers))
+			if *showBody {
+				color.Printf("@{g}%v@{|}\n", string(body))
+			}
+			// 			color.Printf("@{g}%v@{|}\n", ehex.EncodeToString(body))
+			// 			color.Printf("@{g}%v@{|}\n", body)
 		} else {
-			fmt.Print(string(dump))
+			// 			fmt.Print(string(dump))
+			fmt.Println(string(headers))
+			fmt.Println(string(body))
+		}
+	}
+	return dump
+}
+
+// dump request , body true/false, print true/false
+func dumpResponse(r *http.Response, b, p bool, host string) []byte {
+	dump, err := httputil.DumpResponse(r, b)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	// 	isGzip := false
+	// 	if v, ok := r.Header["Accept-Encoding"]; ok {
+	// 		if strings.Contains(v[0], "gzip") {
+	// 			isGzip = true
+	// 			log.Println("is gzip")
+	// 		}
+	// 	}
+	if p {
+		index := bytes.Index(dump, []byte("\r\n\r\n"))
+		headers := dump[:index]
+		body := bytes.TrimLeft(dump[index:], "\r\n\r\n")
+		// 		body = bytes.TrimLeft(body, string([]byte{13, 10, 13, 10}))
+
+		// 		if isGzip {
+		// 			reader := bytes.NewReader(body)
+		// 			g, err := gzip.NewReader(reader)
+		// 			if err != nil {
+		// 				log.Println(err.Error())
+		// 			}
+		// 			body, err = ioutil.ReadAll(g)
+		// 			if err != nil {
+		// 				log.Println(err.Error())
+		// 			}
+		// 		}
+		if *veryverbose {
+			now := time.Now()
+			dirname := "/tmp/stfdump/" + host
+			if _, err := os.Stat(dirname); err != nil {
+				if err := os.MkdirAll(dirname, 0755); err != nil {
+					log.Fatalln(err.Error())
+				}
+			}
+			filename := fmt.Sprintf("%s/%d<", dirname, now.UnixNano())
+			ioutil.WriteFile(filename, body, 0644)
+		}
+		if *colors {
+			// 			color.Printf("@{b}%s@{|}", string(dump))
+			color.Printf("@{c}%v@{|}\n", string(headers))
+			if *showBody {
+				color.Printf("@{g}%v@{|}\n", string(body))
+			}
+			// 			color.Printf("@{g}%v@{|}\n", ehex.EncodeToString(body))
+			// 			color.Printf("@{g}%v@{|}\n", body)
+		} else {
+			// 			fmt.Print(string(dump))
+			fmt.Println(string(headers))
+			fmt.Println(string(body))
 		}
 	}
 	return dump
@@ -332,7 +444,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
 		path = r.URL.String()
 		host = r.URL.Host
 	} else {
-		path = upper + r.URL.Path
+		path = upper + r.URL.RequestURI()
 		host = r.Host
 	}
 	req, err := http.NewRequest(r.Method, path, r.Body)
@@ -346,6 +458,17 @@ func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
 		req.Host = host
 	}
 	t1 := time.Now()
+
+	for k, v := range r.Header {
+		for i, vv := range v {
+			if i == 0 {
+				req.Header.Set(k, vv)
+			} else {
+				req.Header.Add(k, vv)
+			}
+		}
+	}
+
 	resp, err := proxyClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(w, err.Error())
@@ -360,7 +483,19 @@ func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
 	}
 	w.Header().Set("X-Upstream-Response-Time", NanoToSecond(time.Since(t1)))
 
+	dumpResponse(resp, true, true, req.Host)
+	// 	b, err := httputil.DumpResponse(resp, true)
+	// 	if err != nil {
+	// 		log.Println(err.Error())
+	// 	}
+	// 	log.Println(string(b))
+
 	io.Copy(w, resp.Body)
+	// 	if v, ok := r.Header["Accept-Encoding"]; ok {
+	// 		if strings.Contains(v[0], "gzip") {
+	// 			log.Println("is gzip")
+	// 		}
+	// 	}
 }
 
 func NanoToSecond(d time.Duration) string {
@@ -424,6 +559,10 @@ func testFileHandler(w http.ResponseWriter, r *http.Request) {
 			if len(ext) > 0 {
 				w.Header().Set("Content-Type", ext)
 			}
+		}
+		params := r.URL.Query()
+		for k, v := range params {
+			w.Header().Set(k, v[0])
 		}
 		switch s {
 		case "b", "B":
