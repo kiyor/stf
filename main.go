@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Tue 01 Nov 2016 12:01:12 AM UTC
+* Last Modified : Sat 14 Jan 2017 12:19:41 AM UTC
 
 * Created By : Kiyor
 
@@ -46,9 +46,10 @@ var (
 	fport    *string = flag.String("p", ":30000", "Listening Port")
 	upstream *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
 
-	sock       *bool = flag.Bool("socks5", false, "socks5 mode")
-	uploadonly *bool = flag.Bool("uploadonly", false, "upload only POST/PUT")
-	showBody   *bool = flag.Bool("body", false, "show body")
+	sock       *bool   = flag.Bool("socks5", false, "socks5 mode")
+	sockAuth   *string = flag.String("socks5auth", "", "socks5 auth mode, import txt/json/string")
+	uploadonly *bool   = flag.Bool("uploadonly", false, "upload only POST/PUT")
+	showBody   *bool   = flag.Bool("body", false, "show body")
 
 	testFile *bool = flag.Bool("testfile", false, "testfile, /1(K/M/G)")
 
@@ -241,6 +242,11 @@ func main() {
 			conf := &socks5.Config{}
 			conf.Resolver = new(Resolver)
 			conf.Rewriter = new(Rewriter)
+			if *sockAuth != "" {
+				cred := parseSocks5Auth(*sockAuth)
+				cator := socks5.UserPassAuthenticator{Credentials: cred}
+				conf.AuthMethods = []socks5.Authenticator{cator}
+			}
 			server, err := socks5.New(conf)
 			if err != nil {
 				panic(err)
