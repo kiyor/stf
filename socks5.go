@@ -6,7 +6,7 @@
 
 * Creation Date : 08-28-2016
 
-* Last Modified : Sat 14 Jan 2017 12:25:33 AM UTC
+* Last Modified : Tue 17 Jan 2017 10:30:15 PM UTC
 
 * Created By : Kiyor
 
@@ -20,16 +20,50 @@ import (
 	"encoding/json"
 	"github.com/kiyor/go-socks5"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"strings"
+	"sync"
 )
+
+var hostsBind = make(map[string]*net.IP)
+var hostsLocker = &sync.Mutex{}
+
+func readHosts(file string) error {
+	hostsLocker.Lock()
+	defer hostsLocker.Unlock()
+	hostsBind = make(map[string]*net.IP)
+	lines, _ := cleanFile(file)
+	for _, line := range lines {
+		for strings.Contains(line, "  ") {
+			line = strings.Replace(line, "  ", " ", -1)
+		}
+		p := strings.Split(line, " ")
+		if ip := net.ParseIP(p[0]); ip != nil {
+			for _, v := range p[1:] {
+				hostsBind[v] = &ip
+			}
+		}
+	}
+	b, _ := json.MarshalIndent(hostsBind, "", "  ")
+	log.Println(string(b))
+	return nil
+}
 
 type Resolver struct {
 }
 
 func (Resolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
+	hostsLocker.Lock()
+	if val, ok := hostsBind[name]; ok {
+		log.Println("hosts found", name, *val)
+		hostsLocker.Unlock()
+		return ctx, *val, nil
+	}
+	hostsLocker.Unlock()
 	addr, err := net.ResolveIPAddr("ip", name)
+	// 	log.Println(name, addr)
 	if err != nil {
 		return ctx, nil, err
 	}
@@ -40,6 +74,7 @@ type Rewriter struct {
 }
 
 func (Rewriter) Rewrite(ctx context.Context, request *socks5.Request) (context.Context, *socks5.AddrSpec) {
+	log.Println(request.RemoteAddr, ">>>", request.DestAddr)
 	return ctx, request.DestAddr
 }
 

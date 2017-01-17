@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Sat 14 Jan 2017 12:19:41 AM UTC
+* Last Modified : Tue 17 Jan 2017 10:21:04 PM UTC
 
 * Created By : Kiyor
 
@@ -48,6 +48,7 @@ var (
 
 	sock       *bool   = flag.Bool("socks5", false, "socks5 mode")
 	sockAuth   *string = flag.String("socks5auth", "", "socks5 auth mode, import txt/json/string")
+	sockHosts  *string = flag.String("socks5hosts", "", "socks5 hosts file")
 	uploadonly *bool   = flag.Bool("uploadonly", false, "upload only POST/PUT")
 	showBody   *bool   = flag.Bool("body", false, "show body")
 
@@ -246,6 +247,10 @@ func main() {
 				cred := parseSocks5Auth(*sockAuth)
 				cator := socks5.UserPassAuthenticator{Credentials: cred}
 				conf.AuthMethods = []socks5.Authenticator{cator}
+			}
+			if *sockHosts != "" {
+				readHosts(*sockHosts)
+				go watcher(*sockHosts, func(string) error { return readHosts(*sockHosts) })
 			}
 			server, err := socks5.New(conf)
 			if err != nil {
