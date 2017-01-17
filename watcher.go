@@ -6,7 +6,7 @@
 
 * Creation Date : 01-17-2017
 
-* Last Modified : Tue 17 Jan 2017 10:45:18 PM UTC
+* Last Modified : Tue 17 Jan 2017 10:57:41 PM UTC
 
 * Created By : Kiyor
 
@@ -63,6 +63,7 @@ func watcher(file string, action func(string) error) {
 				}
 			}
 			log.Println("monitor", q)
+			go action(q)
 		}
 	}()
 
