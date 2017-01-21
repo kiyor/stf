@@ -6,7 +6,7 @@
 
 * Creation Date : 08-28-2016
 
-* Last Modified : Tue 17 Jan 2017 10:30:15 PM UTC
+* Last Modified : Sat 21 Jan 2017 02:46:08 AM UTC
 
 * Created By : Kiyor
 
@@ -74,8 +74,17 @@ type Rewriter struct {
 }
 
 func (Rewriter) Rewrite(ctx context.Context, request *socks5.Request) (context.Context, *socks5.AddrSpec) {
-	log.Println(request.RemoteAddr, ">>>", request.DestAddr)
+	// 	log.Println(request.RemoteAddr, ">>>", request.DestAddr)
 	return ctx, request.DestAddr
+}
+
+type LogFinalizer struct {
+	log *log.Logger
+}
+
+func (l *LogFinalizer) Finalize(ctx context.Context) error {
+	l.log.Println(ctx.Value("username"), ctx.Value("raddr"), ctx.Value("daddr"), ctx.Value("request_byte"), ctx.Value("response_byte"))
+	return nil
 }
 
 func parseSocks5Auth(input string) socks5.StaticCredentials {

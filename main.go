@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Tue 17 Jan 2017 10:21:04 PM UTC
+* Last Modified : Sat 21 Jan 2017 02:50:06 AM UTC
 
 * Created By : Kiyor
 
@@ -243,6 +243,8 @@ func main() {
 			conf := &socks5.Config{}
 			conf.Resolver = new(Resolver)
 			conf.Rewriter = new(Rewriter)
+			conf.Logger = log.New(os.Stdout, "", log.LstdFlags)
+			conf.Finalizer = &LogFinalizer{conf.Logger}
 			if *sockAuth != "" {
 				cred := parseSocks5Auth(*sockAuth)
 				cator := socks5.UserPassAuthenticator{Credentials: cred}
