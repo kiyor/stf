@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Sun 14 May 2017 05:33:53 AM UTC
+* Last Modified : Sun 14 May 2017 06:57:01 AM UTC
 
 * Created By : Kiyor
 
@@ -16,7 +16,7 @@ package main
 
 import (
 	"bytes"
-	// 	"compress/gzip"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"flag"
@@ -24,6 +24,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/kiyor/go-socks5"
 	"github.com/wsxiaoys/terminal/color"
+	"golang.org/x/net/proxy"
 	"io"
 	"io/ioutil"
 	"log"
@@ -49,6 +50,7 @@ var (
 	sock       *bool   = flag.Bool("socks5", false, "socks5 mode")
 	sockAuth   *string = flag.String("socks5auth", "", "socks5 auth mode, import txt/json/string")
 	sockHosts  *string = flag.String("socks5hosts", "", "socks5 hosts file")
+	sockNext   *string = flag.String("socks5next", "", "socks5 proxy chan next point")
 	uploadonly *bool   = flag.Bool("uploadonly", false, "upload only POST/PUT")
 	showBody   *bool   = flag.Bool("body", false, "show body")
 
@@ -246,6 +248,21 @@ func main() {
 			conf.Resolver = new(Resolver)
 			conf.Rewriter = new(Rewriter)
 			conf.Rules = new(FireWallRuleSet)
+			if *sockNext != "" {
+				dialer, err := proxy.SOCKS5("tcp", *sockNext,
+					nil,
+					&net.Dialer{
+						KeepAlive: 30 * time.Second,
+					},
+				)
+				if err != nil {
+					log.Println(err.Error())
+					os.Exit(1)
+				}
+				conf.Dial = func(ctx context.Context, net_, addr string) (net.Conn, error) {
+					return dialer.Dial(net_, addr)
+				}
+			}
 			conf.Logger = log.New(os.Stdout, "", log.LstdFlags)
 			conf.Finalizer = &LogFinalizer{conf.Logger}
 			if *sockAuth != "" {

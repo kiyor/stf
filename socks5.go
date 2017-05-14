@@ -6,7 +6,7 @@
 
 * Creation Date : 08-28-2016
 
-* Last Modified : Sun 14 May 2017 05:37:03 AM UTC
+* Last Modified : Sun 14 May 2017 06:38:01 AM UTC
 
 * Created By : Kiyor
 
@@ -29,7 +29,7 @@ import (
 )
 
 var hostsBind = make(map[string]*net.IP)
-var hostsLocker = &sync.Mutex{}
+var hostsLocker = new(sync.RWMutex)
 
 func readHosts(file string) error {
 	hostsLocker.Lock()
@@ -56,13 +56,13 @@ type Resolver struct {
 }
 
 func (Resolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
-	hostsLocker.Lock()
+	hostsLocker.RLock()
 	if val, ok := hostsBind[name]; ok {
 		log.Println("hosts found", name, *val)
-		hostsLocker.Unlock()
+		hostsLocker.RUnlock()
 		return ctx, *val, nil
 	}
-	hostsLocker.Unlock()
+	hostsLocker.RUnlock()
 	addr, err := net.ResolveIPAddr("ip", name)
 	// 	log.Println(name, addr)
 	if err != nil {
