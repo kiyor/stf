@@ -6,7 +6,7 @@
 
 * Creation Date : 08-28-2016
 
-* Last Modified : Sat 21 Jan 2017 02:46:08 AM UTC
+* Last Modified : Sun 14 May 2017 05:37:03 AM UTC
 
 * Created By : Kiyor
 
@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/kiyor/go-socks5"
+	"github.com/kiyor/subnettool"
 	"io/ioutil"
 	"log"
 	"net"
@@ -83,7 +84,9 @@ type LogFinalizer struct {
 }
 
 func (l *LogFinalizer) Finalize(ctx context.Context) error {
-	l.log.Println(ctx.Value("username"), ctx.Value("raddr"), ctx.Value("daddr"), ctx.Value("request_byte"), ctx.Value("response_byte"))
+	if ctx.Value("raddr") != nil {
+		l.log.Println(ctx.Value("username"), ctx.Value("raddr"), ctx.Value("daddr"), ctx.Value("request_byte"), ctx.Value("response_byte"))
+	}
 	return nil
 }
 
@@ -137,4 +140,38 @@ func cleanFile(file string) ([]string, error) {
 		return line, err
 	}
 	return line, nil
+}
+
+type FireWallRuleSet struct{}
+
+func (FireWallRuleSet) Allow(ctx context.Context, req *socks5.Request) (context.Context, bool) {
+	if len(flagAllowIP) > 0 {
+		for _, allow := range flagAllowIP {
+			if ip := net.ParseIP(allow); ip != nil {
+				if ip.Equal(req.RemoteAddr.IP) {
+					return ctx, true
+				}
+			} else {
+				if subnettool.CIDRMatch(req.RemoteAddr.IP.String(), allow) {
+					return ctx, true
+				}
+			}
+		}
+		return ctx, false
+	}
+	if len(flagDenyIP) > 0 {
+		for _, deny := range flagDenyIP {
+			if ip := net.ParseIP(deny); ip != nil {
+				if ip.Equal(req.RemoteAddr.IP) {
+					return ctx, false
+				}
+			} else {
+				if subnettool.CIDRMatch(req.RemoteAddr.IP.String(), deny) {
+					return ctx, false
+				}
+			}
+		}
+		return ctx, true
+	}
+	return ctx, true
 }

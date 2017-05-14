@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Sat 21 Jan 2017 02:50:06 AM UTC
+* Last Modified : Sun 14 May 2017 05:33:53 AM UTC
 
 * Created By : Kiyor
 
@@ -88,6 +88,8 @@ var (
 )
 
 func init() {
+	flag.Var(&flagAllowIP, "allow", "allow IP, -allow '1.1.1.1' -allow '2.2.2.0/24'")
+	flag.Var(&flagDenyIP, "deny", "deny IP, -deny '1.1.1.1' -deny '2.2.2.0/24'")
 	flag.Parse()
 	if *version {
 		fmt.Printf("%v.%v", VER, buildtime)
@@ -243,6 +245,7 @@ func main() {
 			conf := &socks5.Config{}
 			conf.Resolver = new(Resolver)
 			conf.Rewriter = new(Rewriter)
+			conf.Rules = new(FireWallRuleSet)
 			conf.Logger = log.New(os.Stdout, "", log.LstdFlags)
 			conf.Finalizer = &LogFinalizer{conf.Logger}
 			if *sockAuth != "" {
