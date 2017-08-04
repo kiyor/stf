@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Sun 14 May 2017 06:57:01 AM UTC
+* Last Modified : Fri 30 Jun 2017 09:58:03 PM UTC
 
 * Created By : Kiyor
 
@@ -190,9 +190,9 @@ func main() {
 		defer func() {
 			var res string
 			if proxyMethod {
-				res = fmt.Sprintf("%v %v %v %v %v", req.RemoteAddr, req.Method, req.URL.String(), NanoToSecond(time.Since(t1)), w.Header().Get("X-Upstream-Response-Time"))
+				res = fmt.Sprintf("%v %v %v %v %v", req.RemoteAddr, req.Method, req.Host+req.URL.String(), NanoToSecond(time.Since(t1)), w.Header().Get("X-Upstream-Response-Time"))
 			} else {
-				res = fmt.Sprintf("%v %v %v %v %v", req.RemoteAddr, req.Method, req.URL.String(), NanoToSecond(time.Since(t1)), "-")
+				res = fmt.Sprintf("%v %v %v %v %v", req.RemoteAddr, req.Method, req.Host+req.URL.String(), NanoToSecond(time.Since(t1)), "-")
 			}
 			if *colors {
 				log.Println(color.Sprintf("@{g}%s", res))
@@ -536,6 +536,7 @@ func NanoToSecond(d time.Duration) string {
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println(r)
 
 	p := *fdir + "/" + r.URL.Path
 	d, _ := filepath.Split(p)
@@ -565,7 +566,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	out, err := os.Create(p)
 	if err != nil {
-		fmt.Fprintf(w, "Unable to create the file for writing. Check your write access privilege\n")
+		fmt.Fprintf(w, "Unable to create the file for writing '%v'. Check your write access privilege\n", p)
 		return
 	}
 
