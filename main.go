@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Fri 30 Jun 2017 09:58:03 PM UTC
+* Last Modified : Tue 08 Aug 2017 06:37:50 AM UTC
 
 * Created By : Kiyor
 
@@ -249,8 +249,14 @@ func main() {
 			conf.Rewriter = new(Rewriter)
 			conf.Rules = new(FireWallRuleSet)
 			if *sockNext != "" {
+				var a *proxy.Auth
+				if len(strings.Split(*sockNext, ":")) > 2 {
+					a = new(proxy.Auth)
+					a.User = strings.Split(*sockNext, ":")[2]
+					a.Password = strings.Split(*sockNext, ":")[3]
+				}
 				dialer, err := proxy.SOCKS5("tcp", *sockNext,
-					nil,
+					a,
 					&net.Dialer{
 						KeepAlive: 30 * time.Second,
 					},
