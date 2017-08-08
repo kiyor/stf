@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Tue 08 Aug 2017 06:37:50 AM UTC
+* Last Modified : Tue 08 Aug 2017 06:44:23 AM UTC
 
 * Created By : Kiyor
 
@@ -250,10 +250,12 @@ func main() {
 			conf.Rules = new(FireWallRuleSet)
 			if *sockNext != "" {
 				var a *proxy.Auth
-				if len(strings.Split(*sockNext, ":")) > 2 {
+				p := strings.Split(*sockNext, ":")
+				if len(p) > 2 {
 					a = new(proxy.Auth)
-					a.User = strings.Split(*sockNext, ":")[2]
-					a.Password = strings.Split(*sockNext, ":")[3]
+					a.User = p[2]
+					a.Password = p[3]
+					*sockNext = strings.Join(p[:2], ":")
 				}
 				dialer, err := proxy.SOCKS5("tcp", *sockNext,
 					a,
