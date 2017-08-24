@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Tue 08 Aug 2017 06:44:23 AM UTC
+* Last Modified : Thu Aug 24 11:12:18 2017
 
 * Created By : Kiyor
 
@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/NYTimes/gziphandler"
 	"github.com/dustin/go-humanize"
 	"github.com/kiyor/go-socks5"
 	"github.com/wsxiaoys/terminal/color"
@@ -177,7 +178,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if stop {
 			return
 		}
@@ -219,11 +220,11 @@ func main() {
 			dumpRequest(req, true, true)
 			return
 		}
-		// 		w.Header().Add("Cache-Control", "no-cache")
+
 		w.Header().Add("Connection", "Keep-Alive")
 		if req.Method == "GET" && !*uploadonly && !*testFile {
 			w.Header().Add("Cache-Control", "no-cache")
-			f := &fileHandler{http.Dir(*fdir)}
+			f := &fileHandler{Dir(*fdir)}
 			f.ServeHTTP(w, req)
 		} else if *testFile {
 			testFileHandler(w, req)
@@ -231,6 +232,8 @@ func main() {
 			uploadHandler(w, req)
 		}
 	})
+
+	mux.Handle("/", gziphandler.GzipHandler(handler))
 
 	log.Println("Listening on", getips())
 	if proxyMethod {
@@ -325,7 +328,7 @@ func main() {
 	}
 
 	if *notimeout {
-		*timeout = time.Duration(time.Hour * 24 * 365 * 10)
+		*timeout = time.Duration(1<<63 - 1)
 	}
 	t := time.Tick(*timeout)
 	go func() {
