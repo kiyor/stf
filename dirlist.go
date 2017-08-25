@@ -6,7 +6,7 @@
 
 * Creation Date : 08-23-2017
 
-* Last Modified : Thu Aug 24 15:48:05 2017
+* Last Modified : Fri 25 Aug 2017 10:14:06 PM UTC
 
 * Created By : Kiyor
 
@@ -15,6 +15,7 @@ _._._._._._._._._._._._._._._._._._._._._.*/
 package main
 
 import (
+	"fmt"
 	"github.com/dustin/go-humanize"
 	"html/template"
 	"net/http"
@@ -24,12 +25,46 @@ import (
 	"strings"
 )
 
+var (
+	extIcon = map[string]string{
+		"mp4":  "file-video-o",
+		"mov":  "file-video-o",
+		"wmv":  "file-video-o",
+		"avi":  "file-video-o",
+		"flv":  "file-video-o",
+		"go":   "file-code-o",
+		"mp3":  "file-audio-o",
+		"jpeg": "file-image-o",
+		"jpg":  "file-image-o",
+		"png":  "file-image-o",
+		"gif":  "file-image-o",
+	}
+)
+
 const (
 	staticTemplate = `
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="google" content="notranslate">
+<meta http-equiv="Content-Language" content="en">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css">
+</head>
+<style>
+  table {
+    font-size: 1.8em;
+  }
+  @media (max-width: 980px) {
+    table {
+      font-size: 2.5em;
+    }
+  }
+</style>
+<body>
 <form action="{{.Url}}" method="get">
   <input type="text" name="key" placeholder="Search..." autofocus><input type="submit" value="GO">
 </form>
-{{if .BackUrl}}<a href="{{.BackUrl}}"> &lt;- </a>{{end}}
+{{if .BackUrl}}<a href="{{.BackUrl}}"> <i class="fa fa-chevron-left" aria-hidden="true"></i> </a>{{end}}
 <table>
   <tr>
     <th><a href="{{index .Urls "name"}}">Name</a></th>
@@ -37,11 +72,14 @@ const (
     <th><a href="{{index .Urls "lastMod"}}">LastMod</a></th>
   </tr>
   {{range .Files}}<tr>
-    <td><a href="{{.Url}}">{{.Name}}</a></td>
+    <td>{{.Icon}}  <a href="{{.Url}}">{{.Name}}</a></td>
     <td>{{.Size}}</td>
     <td>{{.LastMod}}</td>
   </tr>{{end}}
-</table>`
+</table>
+</body>
+</html>
+`
 )
 
 type Page struct {
@@ -55,11 +93,12 @@ type Page struct {
 type PageFile struct {
 	Name    string
 	Url     string
+	Icon    template.HTML
 	Size    string
 	LastMod string
 }
 
-func dirList1(w http.ResponseWriter, f http.File, u *url.URL) {
+func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 	dirs, err := f.Readdir(-1)
 	if err != nil {
 		// TODO: log err.Error() to the Server.ErrorLog, once it's possible
@@ -69,13 +108,18 @@ func dirList1(w http.ResponseWriter, f http.File, u *url.URL) {
 		return
 	}
 
-	v := u.Query()
+	v := r.URL.Query()
 	orderBy := v.Get("by")
 	desc := v.Get("desc")
 	key := v.Get("key")
 	var list []os.FileInfo
 	if len(key) != 0 {
 		for _, v := range dirs {
+			if v.Name() == key {
+				u := url.URL{Path: v.Name()}
+				http.Redirect(w, r, u.String(), 302)
+				return
+			}
 			if strings.Contains(v.Name(), key) {
 				list = append(list, v)
 			}
@@ -83,10 +127,10 @@ func dirList1(w http.ResponseWriter, f http.File, u *url.URL) {
 		dirs = list
 	}
 
-	u.RawQuery = v.Encode()
+	r.URL.RawQuery = v.Encode()
 
 	page := new(Page)
-	page.Url = u.Path
+	page.Url = r.URL.Path
 	page.Urls = make(map[string]string)
 
 	for _, t := range []string{"name", "size", "lastMod"} {
@@ -97,8 +141,8 @@ func dirList1(w http.ResponseWriter, f http.File, u *url.URL) {
 		default:
 			v.Set("desc", "1")
 		}
-		u.RawQuery = v.Encode()
-		page.Urls[t] = u.String()
+		r.URL.RawQuery = v.Encode()
+		page.Urls[t] = r.URL.String()
 	}
 
 	switch orderBy {
@@ -127,7 +171,7 @@ func dirList1(w http.ResponseWriter, f http.File, u *url.URL) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// 	u := url.URL{Path: f.Name()}
-	p := strings.Split(u.Path, "/")
+	p := strings.Split(r.URL.Path, "/")
 	if len(p) > 2 {
 		page.BackUrl = "/" + strings.Join(p[1:len(p)-2], "/")
 	}
@@ -136,12 +180,16 @@ func dirList1(w http.ResponseWriter, f http.File, u *url.URL) {
 		f.Name = d.Name()
 		if d.IsDir() {
 			f.Name += "/"
+			f.Icon = `<i class="fa fa-folder-open-o" aria-hidden="true"></i>`
+		} else {
+			f.Icon = getIcon(f.Name)
 		}
 		f.Name = htmlReplacer.Replace(f.Name)
 		u := url.URL{Path: f.Name}
 		f.Url = u.String()
 		f.Size = humanize.IBytes(uint64(d.Size()))
 		f.LastMod = d.ModTime().Format("01-02-2006 15:04:05")
+
 		// name may contain '?' or '#', which must be escaped to remain
 		// part of the URL path, and not indicate the start of a query
 		// string or fragment.
@@ -156,4 +204,15 @@ func dirList1(w http.ResponseWriter, f http.File, u *url.URL) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func getIcon(file string) template.HTML {
+	p := strings.Split(file, ".")
+	if len(p) > 1 {
+		ext := p[len(p)-1:][0]
+		if v, ok := extIcon[ext]; ok {
+			return template.HTML(fmt.Sprintf(`<i class="fa fa-%s" aria-hidden="true"></i>`, v))
+		}
+	}
+	return `<i class="fa fa-file-o" aria-hidden="true"></i>`
 }

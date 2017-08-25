@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Thu Aug 24 11:12:18 2017
+* Last Modified : Fri 25 Aug 2017 07:30:14 AM UTC
 
 * Created By : Kiyor
 
@@ -21,7 +21,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/NYTimes/gziphandler"
+	// 	"github.com/NYTimes/gziphandler"
 	"github.com/dustin/go-humanize"
 	"github.com/kiyor/go-socks5"
 	"github.com/wsxiaoys/terminal/color"
@@ -121,16 +121,20 @@ func init() {
 		*upstream = *bridge
 	}
 	p := *fport
-	if p[:1] != ":" {
+	if p[:1] != ":" && !strings.Contains(*fport, ":") {
 		p = ":" + p
 		fport = &p
 	}
 
-	log.SetFlags(19)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 }
 
 func getips() string {
+	p := *fport
+	if p[:1] != ":" && strings.Contains(*fport, ":") {
+		return *fport
+	}
 	ips, err := net.InterfaceAddrs()
 	if err != nil {
 		panic(err)
@@ -233,7 +237,7 @@ func main() {
 		}
 	})
 
-	mux.Handle("/", gziphandler.GzipHandler(handler))
+	mux.Handle("/", handler)
 
 	log.Println("Listening on", getips())
 	if proxyMethod {

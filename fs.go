@@ -6,7 +6,7 @@
 
 * Creation Date : 08-23-2017
 
-* Last Modified : Thu Aug 24 15:06:42 2017
+* Last Modified : Fri 25 Aug 2017 10:11:48 PM UTC
 
 * Created By : Kiyor
 
@@ -602,7 +602,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, fs FileSystem, name strin
 			return
 		}
 		w.Header().Set("Last-Modified", d.ModTime().UTC().Format(http.TimeFormat))
-		dirList1(w, f, r.URL)
+		dirList1(w, f, r)
 		return
 	}
 
