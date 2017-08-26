@@ -6,7 +6,7 @@
 
 * Creation Date : 08-23-2017
 
-* Last Modified : Fri 25 Aug 2017 10:14:06 PM UTC
+* Last Modified : Sat 26 Aug 2017 12:09:54 AM UTC
 
 * Created By : Kiyor
 
@@ -170,10 +170,10 @@ func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// 	u := url.URL{Path: f.Name()}
-	p := strings.Split(r.URL.Path, "/")
+	r.URL.RawQuery = ""
+	p := strings.Split(r.URL.String(), "/")
 	if len(p) > 2 {
-		page.BackUrl = "/" + strings.Join(p[1:len(p)-2], "/")
+		page.BackUrl = "/" + strings.Join(p[1:len(p)-2], "/") + "/"
 	}
 	for _, d := range dirs {
 		var f PageFile

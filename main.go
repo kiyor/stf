@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Fri 25 Aug 2017 07:30:14 AM UTC
+* Last Modified : Sat 26 Aug 2017 12:05:31 AM UTC
 
 * Created By : Kiyor
 
@@ -187,24 +187,10 @@ func main() {
 			return
 		}
 		wg.Add(1)
-		t1 := time.Now()
 		if *veryverbose {
 			dumpRequest(req, true, true)
 		}
 		defer wg.Done()
-		defer func() {
-			var res string
-			if proxyMethod {
-				res = fmt.Sprintf("%v %v %v %v %v", req.RemoteAddr, req.Method, req.Host+req.URL.String(), NanoToSecond(time.Since(t1)), w.Header().Get("X-Upstream-Response-Time"))
-			} else {
-				res = fmt.Sprintf("%v %v %v %v %v", req.RemoteAddr, req.Method, req.Host+req.URL.String(), NanoToSecond(time.Since(t1)), "-")
-			}
-			if *colors {
-				log.Println(color.Sprintf("@{g}%s", res))
-			} else {
-				log.Println(res)
-			}
-		}()
 		ch <- true
 		if proxyMethod {
 			if isbridge {
@@ -237,7 +223,7 @@ func main() {
 		}
 	})
 
-	mux.Handle("/", handler)
+	mux.Handle("/", LogHandler(handler))
 
 	log.Println("Listening on", getips())
 	if proxyMethod {
@@ -369,29 +355,10 @@ func dumpRequest(r *http.Request, b, p bool) []byte {
 	if err != nil {
 		log.Println(err.Error())
 	}
-	// 	isGzip := false
-	// 	if v, ok := r.Header["Accept-Encoding"]; ok {
-	// 		if strings.Contains(v[0], "gzip") {
-	// 			isGzip = true
-	// 			log.Println("is gzip")
-	// 		}
-	// 	}
 	if p {
 		index := bytes.Index(dump, []byte("\r\n\r\n"))
 		headers := dump[:index]
 		body := bytes.TrimLeft(dump[index:], "\r\n\r\n")
-		// 		body = bytes.TrimLeft(body, string([]byte{13, 10, 13, 10}))
-		// 		if isGzip {
-		// 			reader := bytes.NewReader(body)
-		// 			g, err := gzip.NewReader(reader)
-		// 			if err != nil {
-		// 				log.Println(err.Error())
-		// 			}
-		// 			body, err = ioutil.ReadAll(g)
-		// 			if err != nil {
-		// 				log.Println(err.Error())
-		// 			}
-		// 		}
 		if *veryverbose {
 			now := time.Now()
 			host := "_"
@@ -653,4 +620,42 @@ func testFileHandler(w http.ResponseWriter, r *http.Request) {
 			// 			fmt.Printf("\r")
 		}
 	}
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	length int
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = 200
+	}
+	w.length = len(b)
+	return w.ResponseWriter.Write(b)
+}
+
+func LogHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t1 := time.Now()
+		ctx := context.Background()
+		writer := statusWriter{w, 0, 0}
+
+		r = r.WithContext(ctx)
+		next.ServeHTTP(&writer, r)
+
+		res := fmt.Sprintf("%v %v %v %v %v %v", r.RemoteAddr, writer.status, writer.length, r.Method, r.Host+r.RequestURI, time.Since(t1))
+		if *colors {
+			log.Println(color.Sprintf("@{g}%s@{|}", res))
+		} else {
+			log.Println(res)
+		}
+
+	})
 }
