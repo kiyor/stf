@@ -6,7 +6,7 @@
 
 * Creation Date : 08-23-2017
 
-* Last Modified : Sat 26 Aug 2017 12:09:54 AM UTC
+* Last Modified : Sat 26 Aug 2017 01:49:18 AM UTC
 
 * Created By : Kiyor
 
@@ -49,43 +49,81 @@ const (
 <meta name="google" content="notranslate">
 <meta http-equiv="Content-Language" content="en">
 <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-alpha.6/css/bootstrap.min.css" integrity="sha384-rwoIResjU2yc3z8GV/NPeZWAv56rSmLldC3R/AZzGRnGxQQKnKkoFVhFQhNUwEyJ" crossorigin="anonymous">
 </head>
 <style>
+  body {
+    font-family:"Microsoft Yahei","Helvetica Neue","Luxi Sans","DejaVu Sans",Tahoma,"Hiragino Sans GB",STHeiti;
+  }
   table {
     font-size: 1.8em;
   }
   @media (max-width: 980px) {
     table {
-      font-size: 2.5em;
+      font-size: 1.8em;
     }
   }
 </style>
 <body>
-<form action="{{.Url}}" method="get">
-  <input type="text" name="key" placeholder="Search..." autofocus><input type="submit" value="GO">
-</form>
-{{if .BackUrl}}<a href="{{.BackUrl}}"> <i class="fa fa-chevron-left" aria-hidden="true"></i> </a>{{end}}
-<table>
-  <tr>
-    <th><a href="{{index .Urls "name"}}">Name</a></th>
-    <th><a href="{{index .Urls "size"}}">Size</a></th> 
-    <th><a href="{{index .Urls "lastMod"}}">LastMod</a></th>
-  </tr>
-  {{range .Files}}<tr>
-    <td>{{.Icon}}  <a href="{{.Url}}">{{.Name}}</a></td>
-    <td>{{.Size}}</td>
-    <td>{{.LastMod}}</td>
-  </tr>{{end}}
-</table>
+
+<div class="container">
+  <div class="row">
+    <div class="col-1">
+      {{if .BackUrl}}<a href="{{.BackUrl}}"><h1> &lt; </h1></a>{{end}}
+    </div>
+    <div class="col-9">
+      <h1>{{.Title}}</h1>
+    </div>
+    <div class="col-2">
+      <form action="{{.Url}}" method="get" class="bd-search hidden-sm-down">
+        <input type="text" name="key" placeholder="Search..." value="{{.Key}}" autofocus>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="row">
+    <div class="col-11">
+      <table class="table table-hover">
+        <tr>
+          <th><a href="{{index .Urls "name"}}">Name</a></th>
+          <th><a href="{{index .Urls "size"}}">Size</a></th> 
+          <th><a href="{{index .Urls "lastMod"}}">LastMod</a></th>
+        </tr>
+        {{range .Files}}<tr>
+          <td>{{.Icon}}  <a href="{{.Url}}">{{.Name}}</a></td>
+          <td>{{.Size}}</td>
+          <td>{{.LastMod}}</td>
+        </tr>{{end}}
+      </table>
+    </div>
+    <div class="col-1">
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="row">
+    <div class="col-1">
+      {{if .BackUrl}}<a href="{{.BackUrl}}"><h1> &lt; </h1></a>{{end}}
+	</div>
+    <div class="col-11">
+	</div>
+  </div>
+</div>
+
 </body>
 </html>
 `
 )
 
 type Page struct {
+	Title   string
 	Files   []*PageFile
 	Url     string
 	Urls    map[string]string
+	Key     string
 	BackUrl string
 	Desc    string
 }
@@ -130,8 +168,14 @@ func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 	r.URL.RawQuery = v.Encode()
 
 	page := new(Page)
-	page.Url = r.URL.Path
+	stat, _ := f.Stat()
+	page.Title = stat.Name()
+	if page.Title == "." {
+		page.Title = "/"
+	}
+	page.Url = r.URL.String()
 	page.Urls = make(map[string]string)
+	page.Key = key
 
 	for _, t := range []string{"name", "size", "lastMod"} {
 		v.Set("by", t)
@@ -141,8 +185,9 @@ func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 		default:
 			v.Set("desc", "1")
 		}
-		r.URL.RawQuery = v.Encode()
-		page.Urls[t] = r.URL.String()
+		// 		r.URL.RawQuery = v.Encode()
+		// 		page.Urls[t] = r.url.string()
+		page.Urls[t] = "?" + v.Encode()
 	}
 
 	switch orderBy {
@@ -174,6 +219,9 @@ func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 	p := strings.Split(r.URL.String(), "/")
 	if len(p) > 2 {
 		page.BackUrl = "/" + strings.Join(p[1:len(p)-2], "/") + "/"
+		if strings.Contains(page.BackUrl, "//") {
+			page.BackUrl = "/"
+		}
 	}
 	for _, d := range dirs {
 		var f PageFile
