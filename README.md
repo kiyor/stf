@@ -1,3 +1,3 @@
 ```bash
-docker run kiyor/stf -help
+docker run --rm kiyor/stf -help
 ```
