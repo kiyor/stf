@@ -5,5 +5,4 @@ RUN cd /go/src/github.com/kiyor/stf && \
 	go install github.com/kiyor/stf
 
 EXPOSE 30000
-ENTRYPOINT ["/go/bin/stf"]
-CMD ["-notimeout"]
+ENTRYPOINT ["/go/bin/stf","-notimeout"]
