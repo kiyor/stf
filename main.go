@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Sat 26 Aug 2017 12:05:31 AM UTC
+* Last Modified : Fri 01 Sep 2017 05:49:23 PM UTC
 
 * Created By : Kiyor
 
@@ -48,12 +48,13 @@ var (
 	fport    *string = flag.String("p", ":30000", "Listening Port")
 	upstream *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
 
-	sock       *bool   = flag.Bool("socks5", false, "socks5 mode")
-	sockAuth   *string = flag.String("socks5auth", "", "socks5 auth mode, import txt/json/string")
-	sockHosts  *string = flag.String("socks5hosts", "", "socks5 hosts file")
-	sockNext   *string = flag.String("socks5next", "", "socks5 proxy chan next point")
-	uploadonly *bool   = flag.Bool("uploadonly", false, "upload only POST/PUT")
-	showBody   *bool   = flag.Bool("body", false, "show body")
+	sock           *bool   = flag.Bool("socks5", false, "socks5 mode")
+	sockAuth       *string = flag.String("socks5auth", "", "socks5 auth mode, import txt/json/string")
+	sockHosts      *string = flag.String("socks5hosts", "", "socks5 hosts file")
+	sockNext       *string = flag.String("socks5next", "", "socks5 proxy chan next point")
+	sockNoResolver *bool   = flag.Bool("socks5noresolver", false, "socks5 without resolver for proxy chan")
+	uploadonly     *bool   = flag.Bool("uploadonly", false, "upload only POST/PUT")
+	showBody       *bool   = flag.Bool("body", false, "show body")
 
 	testFile *bool = flag.Bool("testfile", false, "testfile, /1(K/M/G)")
 
@@ -278,6 +279,9 @@ func main() {
 			server, err := socks5.New(conf)
 			if err != nil {
 				panic(err)
+			}
+			if *sockNoResolver {
+				conf.Resolver = nil
 			}
 
 			if err := server.ListenAndServe("tcp", *fport); err != nil {
