@@ -6,7 +6,7 @@
 
 * Creation Date : 08-28-2016
 
-* Last Modified : Sun 14 May 2017 06:38:01 AM UTC
+* Last Modified : Sun 03 Sep 2017 03:47:08 AM UTC
 
 * Created By : Kiyor
 
@@ -91,13 +91,17 @@ func (l *LogFinalizer) Finalize(ctx context.Context) error {
 }
 
 func parseSocks5Auth(input string) socks5.StaticCredentials {
-	if strings.Contains(input, " ") {
-		p := strings.Split(input, " ")
-		return socks5.StaticCredentials{
-			p[0]: p[1],
+	cred := make(socks5.StaticCredentials)
+	for _, v := range []string{" ", ":"} {
+		if strings.Contains(input, v) {
+			p := strings.Split(input, v)
+			for i := 0; i < len(p); i += 2 {
+				cred[p[i]] = p[i+1]
+			}
+			log.Println(cred)
+			return cred
 		}
 	}
-	cred := make(socks5.StaticCredentials)
 	d, err := ioutil.ReadFile(input)
 	if err != nil {
 		return socks5.StaticCredentials{}

@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Fri 01 Sep 2017 05:49:23 PM UTC
+* Last Modified : Sun 03 Sep 2017 03:40:21 AM UTC
 
 * Created By : Kiyor
 
@@ -265,8 +265,8 @@ func main() {
 					return dialer.Dial(net_, addr)
 				}
 			}
-			conf.Logger = log.New(os.Stdout, "", log.LstdFlags)
-			conf.Finalizer = &LogFinalizer{conf.Logger}
+			conf.Logger = log.New(ioutil.Discard, "", log.LstdFlags)
+			conf.Finalizer = &LogFinalizer{log.New(os.Stdout, "", log.LstdFlags)}
 			if *sockAuth != "" {
 				cred := parseSocks5Auth(*sockAuth)
 				cator := socks5.UserPassAuthenticator{Credentials: cred}
