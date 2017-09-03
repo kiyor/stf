@@ -6,7 +6,7 @@
 
 * Creation Date : 08-28-2016
 
-* Last Modified : Sun 03 Sep 2017 03:47:08 AM UTC
+* Last Modified : Sun 03 Sep 2017 06:29:25 AM UTC
 
 * Created By : Kiyor
 
@@ -98,7 +98,6 @@ func parseSocks5Auth(input string) socks5.StaticCredentials {
 			for i := 0; i < len(p); i += 2 {
 				cred[p[i]] = p[i+1]
 			}
-			log.Println(cred)
 			return cred
 		}
 	}
