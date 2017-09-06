@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Sun 03 Sep 2017 03:40:21 AM UTC
+* Last Modified : Wed 06 Sep 2017 05:35:12 PM UTC
 
 * Created By : Kiyor
 
@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/viki-org/dnscache"
 	// 	"github.com/NYTimes/gziphandler"
 	"github.com/dustin/go-humanize"
 	"github.com/kiyor/go-socks5"
@@ -239,7 +240,7 @@ func main() {
 	if *sock {
 		go func() {
 			conf := &socks5.Config{}
-			conf.Resolver = new(Resolver)
+			conf.Resolver = &Resolver{dnscache.New(time.Minute * 5)}
 			conf.Rewriter = new(Rewriter)
 			conf.Rules = new(FireWallRuleSet)
 			if *sockNext != "" {

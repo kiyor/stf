@@ -6,7 +6,7 @@
 
 * Creation Date : 08-28-2016
 
-* Last Modified : Sun 03 Sep 2017 06:29:25 AM UTC
+* Last Modified : Wed 06 Sep 2017 05:41:41 PM UTC
 
 * Created By : Kiyor
 
@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"github.com/kiyor/go-socks5"
 	"github.com/kiyor/subnettool"
+	"github.com/viki-org/dnscache"
 	"io/ioutil"
 	"log"
 	"net"
@@ -28,8 +29,10 @@ import (
 	"sync"
 )
 
-var hostsBind = make(map[string]*net.IP)
-var hostsLocker = new(sync.RWMutex)
+var (
+	hostsBind   = make(map[string]*net.IP)
+	hostsLocker = new(sync.RWMutex)
+)
 
 func readHosts(file string) error {
 	hostsLocker.Lock()
@@ -53,9 +56,10 @@ func readHosts(file string) error {
 }
 
 type Resolver struct {
+	*dnscache.Resolver
 }
 
-func (Resolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
+func (r *Resolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
 	hostsLocker.RLock()
 	if val, ok := hostsBind[name]; ok {
 		log.Println("hosts found", name, *val)
@@ -63,19 +67,17 @@ func (Resolver) Resolve(ctx context.Context, name string) (context.Context, net.
 		return ctx, *val, nil
 	}
 	hostsLocker.RUnlock()
-	addr, err := net.ResolveIPAddr("ip", name)
-	// 	log.Println(name, addr)
+	ip, err := r.FetchOne(name)
 	if err != nil {
 		return ctx, nil, err
 	}
-	return ctx, addr.IP, err
+	return ctx, ip, err
 }
 
 type Rewriter struct {
 }
 
 func (Rewriter) Rewrite(ctx context.Context, request *socks5.Request) (context.Context, *socks5.AddrSpec) {
-	// 	log.Println(request.RemoteAddr, ">>>", request.DestAddr)
 	return ctx, request.DestAddr
 }
 
@@ -83,10 +85,12 @@ type LogFinalizer struct {
 	log *log.Logger
 }
 
-func (l *LogFinalizer) Finalize(ctx context.Context) error {
-	if ctx.Value("raddr") != nil {
-		l.log.Println(ctx.Value("username"), ctx.Value("raddr"), ctx.Value("daddr"), ctx.Value("request_byte"), ctx.Value("response_byte"))
+func (l *LogFinalizer) Finalize(request *socks5.Request, conn net.Conn, ctx context.Context) error {
+	user := "-"
+	if val, ok := request.AuthContext.Payload["Username"]; ok {
+		user = val
 	}
+	l.log.Println(user, request.RemoteAddr.String(), strings.Replace(request.DestAddr.String(), " ", "", -1), request.ReqByte, request.RespByte, request.ResolveTime.Sub(request.StartTime), request.FinishTime.Sub(request.StartTime))
 	return nil
 }
 
