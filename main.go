@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Mon 02 Oct 2017 09:50:41 PM UTC
+* Last Modified : Mon 02 Oct 2017 11:13:34 PM UTC
 
 * Created By : Kiyor
 
@@ -40,6 +40,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 )
 
@@ -65,7 +66,8 @@ var (
 
 	version *bool = flag.Bool("version", false, "output version and exit")
 
-	rt = flag.Int("return", -1, "debug test return code")
+	rt      = flag.Int("return", -1, "debug test return code")
+	threexx = flag.String("3xx", "", "301/302 https://{{.Host}}{{.URL}}")
 
 	tcp      bool
 	isbridge bool
@@ -209,6 +211,27 @@ func main() {
 		if *rt != -1 {
 			w.WriteHeader(*rt)
 			dumpRequest(req, true, true)
+			return
+		}
+		if len(*threexx) != 0 {
+			code := (*threexx)[:3]
+			c := 302
+			var u string
+			var err error
+			c, err = strconv.Atoi(code)
+			if err != nil {
+				u = *threexx
+				c = 302
+			} else {
+				u = (*threexx)[4:]
+			}
+			var buf bytes.Buffer
+			t, _ := template.New("url").Parse(u)
+			err = t.Execute(&buf, req)
+			if err != nil {
+				log.Println(err.Error())
+			}
+			http.Redirect(w, req, buf.String(), c)
 			return
 		}
 
