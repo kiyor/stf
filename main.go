@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Wed 06 Sep 2017 05:35:12 PM UTC
+* Last Modified : Mon 02 Oct 2017 06:15:44 PM UTC
 
 * Created By : Kiyor
 
@@ -21,10 +21,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/viki-org/dnscache"
-	// 	"github.com/NYTimes/gziphandler"
 	"github.com/dustin/go-humanize"
 	"github.com/kiyor/go-socks5"
+	"github.com/viki-org/dnscache"
 	"github.com/wsxiaoys/terminal/color"
 	"golang.org/x/net/proxy"
 	"io"
