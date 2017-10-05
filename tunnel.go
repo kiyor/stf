@@ -6,7 +6,7 @@
 
 * Creation Date : 10-05-2017
 
-* Last Modified : Thu 05 Oct 2017 08:55:10 PM UTC
+* Last Modified : Thu 05 Oct 2017 09:37:36 PM UTC
 
 * Created By : Kiyor
 
@@ -81,14 +81,12 @@ func (p *Pxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			outReq.Header.Set("X-Forwarded-For", clientIP)
 		}
 
-		// step 2
 		res, err := transport.RoundTrip(outReq)
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
 
-		// step 3
 		for key, value := range res.Header {
 			for _, v := range value {
 				w.Header().Add(key, v)
@@ -120,9 +118,8 @@ func Copy(dst io.Writer, src io.Reader, errCh chan error, sizeCh chan int64) {
 	if err == io.EOF {
 		err = nil
 	}
-	if tcpConn, ok := dst.(closeWriter); ok {
+	if tcpConn, ok := dst.(*net.TCPConn); ok {
 		tcpConn.CloseWrite()
-		log.Println("conn close after", size)
 	}
 
 	errCh <- err
