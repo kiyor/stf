@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Mon 02 Oct 2017 11:13:34 PM UTC
+* Last Modified : Thu 05 Oct 2017 08:05:52 PM UTC
 
 * Created By : Kiyor
 
@@ -48,14 +48,17 @@ var (
 	fdir     *string = flag.String("d", ".", "Mount Dir")
 	fport    *string = flag.String("p", ":30000", "Listening Port")
 	upstream *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
+	next     *string = flag.String("next", "[ip:port](:user:pass)", "proxy mode with socks5 proxy to upstream")
 
 	sock           *bool   = flag.Bool("socks5", false, "socks5 mode")
 	sockAuth       *string = flag.String("socks5auth", "", "socks5 auth mode, import txt/json/string")
 	sockHosts      *string = flag.String("socks5hosts", "", "socks5 hosts file")
 	sockNext       *string = flag.String("socks5next", "", "socks5 proxy chan next point")
 	sockNoResolver *bool   = flag.Bool("socks5noresolver", false, "socks5 without resolver for proxy chan")
-	uploadonly     *bool   = flag.Bool("uploadonly", false, "upload only POST/PUT")
-	showBody       *bool   = flag.Bool("body", false, "show body")
+
+	httpTunnel *bool = flag.Bool("tunnel", false, "http tunnel mode")
+	uploadonly *bool = flag.Bool("uploadonly", false, "upload only POST/PUT")
+	showBody   *bool = flag.Bool("body", false, "show body")
 
 	testFile *bool = flag.Bool("testfile", false, "testfile, /1(K/M/G)")
 
@@ -75,11 +78,6 @@ var (
 	timeout   *time.Duration = flag.Duration("timeout", 5*time.Minute, "timeout")
 	notimeout                = flag.Bool("notimeout", false, "no timeout")
 
-	proxyClient = http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
 	proxyMethod = false
 
 	reTestFile = regexp.MustCompile(`(\d+)(b|B|k|K|m|M|g|G)(.*)`)
@@ -313,6 +311,12 @@ func main() {
 		}()
 	} else if tcp {
 		go tcpProxy()
+	} else if *httpTunnel {
+		go func() {
+			if err := http.ListenAndServe(*fport, NewProxy()); err != nil {
+				panic(err)
+			}
+		}()
 	} else {
 		if !isbridge {
 			if len(*crt) > 0 && len(*key) > 0 {
@@ -511,9 +515,17 @@ func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
 		}
 	}
 
+	proxyClient := http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			Dial:            toDial(*next),
+		},
+	}
+
 	resp, err := proxyClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(w, err.Error())
+		w.WriteHeader(500)
 		return
 	}
 	defer resp.Body.Close()
@@ -525,19 +537,10 @@ func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
 	}
 	w.Header().Set("X-Upstream-Response-Time", NanoToSecond(time.Since(t1)))
 
-	dumpResponse(resp, true, true, req.Host)
-	// 	b, err := httputil.DumpResponse(resp, true)
-	// 	if err != nil {
-	// 		log.Println(err.Error())
-	// 	}
-	// 	log.Println(string(b))
-
+	if *veryverbose {
+		dumpResponse(resp, true, true, req.Host)
+	}
 	io.Copy(w, resp.Body)
-	// 	if v, ok := r.Header["Accept-Encoding"]; ok {
-	// 		if strings.Contains(v[0], "gzip") {
-	// 			log.Println("is gzip")
-	// 		}
-	// 	}
 }
 
 func NanoToSecond(d time.Duration) string {
