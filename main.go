@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Thu 05 Oct 2017 08:05:52 PM UTC
+* Last Modified : Mon 16 Oct 2017 11:24:52 PM UTC
 
 * Created By : Kiyor
 
@@ -29,6 +29,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"mime"
 	"net"
 	"net/http"
@@ -87,7 +88,6 @@ var (
 	stop      bool
 	buildtime string
 	VER       = "1.0"
-	bt        = make([]byte, 1024)
 	serveByte uint64
 )
 
@@ -234,8 +234,12 @@ func main() {
 		}
 
 		w.Header().Add("Connection", "Keep-Alive")
-		if req.Method == "GET" && !*uploadonly && !*testFile {
-			w.Header().Add("Cache-Control", "no-cache")
+		if (req.Method == "GET" || req.Method == "HEAD") && !*uploadonly && !*testFile {
+			if len(req.Header.Get("Cache-Control")) > 0 {
+				w.Header().Add("Cache-Control", req.Header.Get("Cache-Control"))
+			} else {
+				w.Header().Add("Cache-Control", "no-cache")
+			}
 			f := &fileHandler{Dir(*fdir)}
 			f.ServeHTTP(w, req)
 		} else if *testFile {
@@ -606,19 +610,29 @@ func testFileHandler(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", ext)
 			}
 		}
+		if len(r.Header.Get("Cache-Control")) > 0 {
+			w.Header().Set("Cache-Control", r.Header.Get("Cache-Control"))
+		} else {
+			w.Header().Set("Cache-Control", "public,max-age=60")
+		}
 		params := r.URL.Query()
 		for k, v := range params {
 			w.Header().Set(k, v[0])
 		}
+		s1 := rand.NewSource(time.Now().UnixNano())
+		r1 := rand.New(s1)
+		bt := make([]byte, 1024)
 		switch s {
 		case "b", "B":
 			w.Header().Set("Content-Length", strconv.Itoa(l))
 			b := make([]byte, l)
+			r1.Read(b)
 			x, _ := w.Write(b)
 			serveByte += uint64(x)
 		case "k", "K":
 			w.Header().Set("Content-Length", strconv.Itoa(l*1024))
 			for i := 0; i < l; i++ {
+				r1.Read(bt)
 				x, _ := w.Write(bt)
 				serveByte += uint64(x)
 			}
@@ -627,6 +641,7 @@ func testFileHandler(w http.ResponseWriter, r *http.Request) {
 			// 			var d uint64
 			for i := 0; i < l; i++ {
 				for j := 0; j < 1024; j++ {
+					r1.Read(bt)
 					x, _ := w.Write(bt)
 					// 					d += uint64(x)
 					serveByte += uint64(x)
@@ -640,6 +655,7 @@ func testFileHandler(w http.ResponseWriter, r *http.Request) {
 			for i := 0; i < l; i++ {
 				for j := 0; j < 1024; j++ {
 					for k := 0; k < 1024; k++ {
+						r1.Read(bt)
 						x, _ := w.Write(bt)
 						// 						d += uint64(x)
 						serveByte += uint64(x)
