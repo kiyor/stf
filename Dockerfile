@@ -2,7 +2,7 @@ FROM golang as builder
 COPY . /go/src/github.com/kiyor/stf
 RUN cd /go/src/github.com/kiyor/stf && \
     go get && \
-    go build
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o stf .
 
 FROM alpine
 RUN apk --no-cache add ca-certificates
