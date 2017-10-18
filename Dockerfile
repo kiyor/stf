@@ -1,8 +1,13 @@
-FROM golang
-ADD . /go/src/github.com/kiyor/stf
+FROM golang as builder
+COPY . /go/src/github.com/kiyor/stf
 RUN cd /go/src/github.com/kiyor/stf && \
-	go get && \
-	go install github.com/kiyor/stf
+    go get && \
+    go build
 
-EXPOSE 30000
-ENTRYPOINT ["/go/bin/stf","-notimeout"]
+FROM alpine
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY . .
+COPY --from=builder /go/src/github.com/kiyor/stf/stf .
+EXPOSE 30000 
+ENTRYPOINT ["./stf","-notimeout"]
