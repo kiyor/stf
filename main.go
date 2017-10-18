@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Mon 16 Oct 2017 11:24:52 PM UTC
+* Last Modified : Wed 18 Oct 2017 02:12:15 AM UTC
 
 * Created By : Kiyor
 
@@ -235,8 +235,8 @@ func main() {
 
 		w.Header().Add("Connection", "Keep-Alive")
 		if (req.Method == "GET" || req.Method == "HEAD") && !*uploadonly && !*testFile {
-			if len(req.Header.Get("Cache-Control")) > 0 {
-				w.Header().Add("Cache-Control", req.Header.Get("Cache-Control"))
+			if len(req.Header.Get("X-Cache-Control")) > 0 {
+				w.Header().Add("Cache-Control", req.Header.Get("X-Cache-Control"))
 			} else {
 				w.Header().Add("Cache-Control", "no-cache")
 			}
@@ -610,8 +610,8 @@ func testFileHandler(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", ext)
 			}
 		}
-		if len(r.Header.Get("Cache-Control")) > 0 {
-			w.Header().Set("Cache-Control", r.Header.Get("Cache-Control"))
+		if len(r.Header.Get("X-Cache-Control")) > 0 {
+			w.Header().Set("Cache-Control", r.Header.Get("X-Cache-Control"))
 		} else {
 			w.Header().Set("Cache-Control", "public,max-age=60")
 		}
