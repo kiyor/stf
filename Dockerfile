@@ -9,4 +9,4 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 COPY --from=builder /go/src/github.com/kiyor/stf/stf .
 EXPOSE 30000 
-ENTRYPOINT ["./stf","-notimeout"]
+ENTRYPOINT ["/root/stf","-notimeout"]
