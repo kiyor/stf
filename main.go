@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Wed 18 Oct 2017 02:12:15 AM UTC
+* Last Modified : Wed 25 Oct 2017 07:55:16 PM UTC
 
 * Created By : Kiyor
 
@@ -552,8 +552,6 @@ func NanoToSecond(d time.Duration) string {
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println(r)
-
 	p := *fdir + "/" + r.URL.Path
 	d, _ := filepath.Split(p)
 
