@@ -6,7 +6,7 @@
 
 * Creation Date : 10-05-2017
 
-* Last Modified : Thu 02 Nov 2017 04:22:28 AM UTC
+* Last Modified : Thu 02 Nov 2017 04:48:34 AM UTC
 
 * Created By : Kiyor
 
@@ -98,8 +98,10 @@ func (p *Pxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// 		if err != nil {
 		// 			log.Println(err.Error())
 		// 		}
+		var n int64
 		for {
-			_, err = io.CopyN(w, res.Body, 16*1024)
+			n, err = io.CopyN(w, res.Body, 16*1024)
+			rec += n
 			if err != nil {
 				break
 			}
