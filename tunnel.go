@@ -6,7 +6,7 @@
 
 * Creation Date : 10-05-2017
 
-* Last Modified : Thu 05 Oct 2017 09:37:36 PM UTC
+* Last Modified : Thu 02 Nov 2017 04:22:28 AM UTC
 
 * Created By : Kiyor
 
@@ -94,7 +94,19 @@ func (p *Pxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		w.WriteHeader(res.StatusCode)
-		rec, err = io.Copy(w, res.Body)
+		// 		rec, err = io.Copy(w, res.Body)
+		// 		if err != nil {
+		// 			log.Println(err.Error())
+		// 		}
+		for {
+			_, err = io.CopyN(w, res.Body, 16*1024)
+			if err != nil {
+				break
+			}
+		}
+		if err == io.EOF {
+			err = nil
+		}
 		if err != nil {
 			log.Println(err.Error())
 		}
