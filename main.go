@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Thu 21 Dec 2017 12:50:06 AM UTC
+* Last Modified : Thu 21 Dec 2017 02:18:11 AM UTC
 
 * Created By : Kiyor
 
@@ -17,7 +17,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
+	// 	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -34,6 +34,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -201,9 +202,13 @@ func main() {
 				if req.TLS == nil {
 					scheme = "http"
 				}
-				proxyHandler(w, req, fmt.Sprintf("%s://%s", scheme, bridgeIp))
+				u, _ := url.Parse(fmt.Sprintf("%s://%s", scheme, bridgeIp))
+				httputil.NewSingleHostReverseProxy(u).ServeHTTP(w, req)
+				// 				proxyHandler(w, req, fmt.Sprintf("%s://%s", scheme, bridgeIp))
 			} else {
-				proxyHandler(w, req, *upstream)
+				u, _ := url.Parse(*upstream)
+				httputil.NewSingleHostReverseProxy(u).ServeHTTP(w, req)
+				// 				proxyHandler(w, req, *upstream)
 			}
 			return
 		}
@@ -493,6 +498,7 @@ func dumpResponse(r *http.Response, b, p bool, host string) []byte {
 	return dump
 }
 
+/*
 func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
 	var path string
 	var host string
@@ -535,7 +541,11 @@ func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
 	resp, err := proxyClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(w, err.Error())
-		w.WriteHeader(500)
+		if resp != nil {
+			w.WriteHeader(resp.StatusCode)
+		} else {
+			w.WriteHeader(500)
+		}
 		return
 	}
 	defer resp.Body.Close()
@@ -553,6 +563,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
 	}
 	io.Copy(w, resp.Body)
 }
+*/
 
 func NanoToSecond(d time.Duration) string {
 	return fmt.Sprintf("%.3f", float64(d.Nanoseconds())/1000000)
