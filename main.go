@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Thu 21 Dec 2017 12:10:21 AM UTC
+* Last Modified : Thu 21 Dec 2017 12:50:06 AM UTC
 
 * Created By : Kiyor
 
@@ -539,6 +539,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
 		return
 	}
 	defer resp.Body.Close()
+	w.WriteHeader(resp.StatusCode)
 
 	for k, v := range resp.Header {
 		for _, v1 := range v {
