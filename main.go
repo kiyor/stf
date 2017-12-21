@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Wed 25 Oct 2017 07:55:16 PM UTC
+* Last Modified : Thu 21 Dec 2017 12:10:21 AM UTC
 
 * Created By : Kiyor
 
@@ -50,6 +50,8 @@ var (
 	fport    *string = flag.String("p", ":30000", "Listening Port")
 	upstream *string = flag.String("upstream", "scheme://ip:port or ip:port", "setup proxy")
 	next     *string = flag.String("next", "[ip:port](:user:pass)", "proxy mode with socks5 proxy to upstream")
+
+	httpAuthFlag *string = flag.String("httpauth", "", "http base auth mode, import txt/json/string")
 
 	sock           *bool   = flag.Bool("socks5", false, "socks5 mode")
 	sockAuth       *string = flag.String("socks5auth", "", "socks5 auth mode, import txt/json/string")
@@ -249,7 +251,11 @@ func main() {
 		}
 	})
 
-	mux.Handle("/", LogHandler(handler))
+	if len(*httpAuthFlag) > 0 {
+		mux.Handle("/", LogHandler(httpAuth(handler)))
+	} else {
+		mux.Handle("/", LogHandler(handler))
+	}
 
 	log.Println("Listening on", getips())
 	if proxyMethod {
