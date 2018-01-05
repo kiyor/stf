@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Thu 21 Dec 2017 02:18:11 AM UTC
+* Last Modified : Fri 05 Jan 2018 01:25:23 AM UTC
 
 * Created By : Kiyor
 
@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"context"
 	// 	"crypto/tls"
+	"compress/gzip"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/NYTimes/gziphandler"
 	"github.com/dustin/go-humanize"
 	"github.com/kiyor/go-socks5"
 	"github.com/viki-org/dnscache"
@@ -81,6 +83,10 @@ var (
 
 	timeout   *time.Duration = flag.Duration("timeout", 5*time.Minute, "timeout")
 	notimeout                = flag.Bool("notimeout", false, "no timeout")
+
+	disableGzip = flag.Bool("gzip-disable", false, "disable gzip, default gzip = on")
+
+	gzipTypes = flag.String("gzip-types", "text/html text/plain text/css text/javascript text/xml application/json application/javascript application/x-javascript application/xml application/atom+xml application/rss+xml application/vnd.ms-fontobject application/x-font-ttf font/opentype font/x-woff", "gzip type")
 
 	proxyMethod = false
 
@@ -256,11 +262,34 @@ func main() {
 		}
 	})
 
+	var h http.Handler
+
 	if len(*httpAuthFlag) > 0 {
-		mux.Handle("/", LogHandler(httpAuth(handler)))
+		h = httpAuth(handler)
 	} else {
-		mux.Handle("/", LogHandler(handler))
+		h = handler
 	}
+	// 	if !*disableGzip {
+	typ := strings.Split(*gzipTypes, " ")
+	for _, v := range typ {
+		typ = append(typ, v+"; charset=utf-8")
+	}
+	wrap, err := gziphandler.GzipHandlerWithOpts(gziphandler.MinSize(512), gziphandler.CompressionLevel(gzip.DefaultCompression), gziphandler.ContentTypes(typ))
+	if err != nil {
+		panic(err)
+	}
+	h = wrap(h)
+	// 	h = gziphandler.GzipHandler(h)
+	// 	}
+	mux.Handle("/", LogHandler(h))
+
+	/*
+		if len(*httpAuthFlag) > 0 {
+			mux.Handle("/", LogHandler(httpAuth(handler)))
+		} else {
+			mux.Handle("/", LogHandler(handler))
+		}
+	*/
 
 	log.Println("Listening on", getips())
 	if proxyMethod {
