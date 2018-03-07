@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Fri 05 Jan 2018 01:25:23 AM UTC
+* Last Modified : Wed 07 Mar 2018 10:56:32 AM UTC
 
 * Created By : Kiyor
 
@@ -66,7 +66,9 @@ var (
 	uploadonly *bool = flag.Bool("uploadonly", false, "upload only POST/PUT")
 	showBody   *bool = flag.Bool("body", false, "show body")
 
-	testFile *bool = flag.Bool("testfile", false, "testfile, /1(K/M/G)")
+	testFile       *bool   = flag.Bool("testfile", false, "testfile, /1(K/M/G)")
+	testFileCC     *string = flag.String("testcc", "public,max-age=60", "testfile Cache-Control Header")
+	testDisCounter *bool   = flag.Bool("testc", false, "disable test counter")
 
 	bridge               *string = flag.String("bridge", "host/ip/host:ip", "quick setup http/+https proxy with upstream 80/+443")
 	crt                  *string = flag.String("crt", "", "crt location if using brdige mode")
@@ -187,7 +189,7 @@ func main() {
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	if *testFile {
+	if *testFile && !*testDisCounter {
 		go byteCounter()
 	}
 
@@ -295,7 +297,7 @@ func main() {
 	if proxyMethod {
 		log.Println("Upstream", *upstream, "tcp", tcp)
 	}
-	if *testFile {
+	if *testFile && !*testDisCounter {
 		log.SetOutput(ioutil.Discard)
 	}
 
@@ -453,15 +455,11 @@ func dumpRequest(r *http.Request, b, p bool) []byte {
 			ioutil.WriteFile(filename, body, 0644)
 		}
 		if *colors {
-			// 			color.Printf("@{b}%s@{|}", string(dump))
 			color.Printf("@{b}%v@{|}\n", string(headers))
 			if *showBody {
 				color.Printf("@{g}%v@{|}\n", string(body))
 			}
-			// 			color.Printf("@{g}%v@{|}\n", ehex.EncodeToString(body))
-			// 			color.Printf("@{g}%v@{|}\n", body)
 		} else {
-			// 			fmt.Print(string(dump))
 			fmt.Println(string(headers))
 			fmt.Println(string(body))
 		}
@@ -519,7 +517,6 @@ func dumpResponse(r *http.Response, b, p bool, host string) []byte {
 			// 			color.Printf("@{g}%v@{|}\n", ehex.EncodeToString(body))
 			// 			color.Printf("@{g}%v@{|}\n", body)
 		} else {
-			// 			fmt.Print(string(dump))
 			fmt.Println(string(headers))
 			fmt.Println(string(body))
 		}
@@ -658,7 +655,7 @@ func testFileHandler(w http.ResponseWriter, r *http.Request) {
 		if len(r.Header.Get("X-Cache-Control")) > 0 {
 			w.Header().Set("Cache-Control", r.Header.Get("X-Cache-Control"))
 		} else {
-			w.Header().Set("Cache-Control", "public,max-age=60")
+			w.Header().Set("Cache-Control", *testFileCC)
 		}
 		params := r.URL.Query()
 		for k, v := range params {
@@ -667,48 +664,82 @@ func testFileHandler(w http.ResponseWriter, r *http.Request) {
 		s1 := rand.NewSource(time.Now().UnixNano())
 		r1 := rand.New(s1)
 		bt := make([]byte, 1024)
+
+		var rangeReq bool
+		var start, end, contentSize, contentLength int
 		switch s {
 		case "b", "B":
-			w.Header().Set("Content-Length", strconv.Itoa(l))
-			b := make([]byte, l)
+			contentSize = l
+		case "k", "K":
+			contentSize = l * 1024
+		case "m", "M":
+			contentSize = l * 1024 * 1024
+		case "g", "G":
+			contentSize = l * 1024 * 1024 * 1024
+		}
+		if len(r.Header.Get("Range")) > 0 {
+			reRange := regexp.MustCompile(`^bytes=(\d+)-(\d+)$`)
+			if reRange.MatchString(r.Header.Get("Range")) {
+				start_ := reRange.FindStringSubmatch(r.Header.Get("Range"))[1]
+				end_ := reRange.FindStringSubmatch(r.Header.Get("Range"))[2]
+				start, _ = strconv.Atoi(start_)
+				end, _ = strconv.Atoi(end_)
+				rangeReq = true
+			}
+			reRange = regexp.MustCompile(`^bytes=(\d+)-$`)
+			if reRange.MatchString(r.Header.Get("Range")) {
+				start_ := reRange.FindStringSubmatch(r.Header.Get("Range"))[1]
+				start, _ = strconv.Atoi(start_)
+				end = contentSize - 1
+				rangeReq = true
+			}
+			contentLength = end - start + 1
+		} else {
+			contentLength = contentSize
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(contentLength))
+		w.Header().Set("Last-Modified", time.Now().Format(http.TimeFormat))
+		if rangeReq {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, contentSize))
+			w.WriteHeader(206)
+			b := make([]byte, contentLength)
 			r1.Read(b)
 			x, _ := w.Write(b)
 			serveByte += uint64(x)
-		case "k", "K":
-			w.Header().Set("Content-Length", strconv.Itoa(l*1024))
-			for i := 0; i < l; i++ {
-				r1.Read(bt)
-				x, _ := w.Write(bt)
+		} else {
+			switch s {
+			case "b", "B":
+				b := make([]byte, l)
+				r1.Read(b)
+				x, _ := w.Write(b)
 				serveByte += uint64(x)
-			}
-		case "m", "M":
-			w.Header().Set("Content-Length", strconv.Itoa(l*1024*1024))
-			// 			var d uint64
-			for i := 0; i < l; i++ {
-				for j := 0; j < 1024; j++ {
+			case "k", "K":
+				for i := 0; i < l; i++ {
 					r1.Read(bt)
 					x, _ := w.Write(bt)
-					// 					d += uint64(x)
 					serveByte += uint64(x)
 				}
-				// 				fmt.Printf("\r%10v", humanize.Bytes(d))
-			}
-			// 			fmt.Printf("\r")
-		case "g", "G":
-			w.Header().Set("Content-Length", strconv.Itoa(l*1024*1024*1024))
-			// 			var d uint64
-			for i := 0; i < l; i++ {
-				for j := 0; j < 1024; j++ {
-					for k := 0; k < 1024; k++ {
+			case "m", "M":
+				for i := 0; i < l; i++ {
+					for j := 0; j < 1024; j++ {
 						r1.Read(bt)
 						x, _ := w.Write(bt)
-						// 						d += uint64(x)
+						// 					d += uint64(x)
 						serveByte += uint64(x)
 					}
-					// 					fmt.Printf("\r%10v", humanize.Bytes(d))
+				}
+			case "g", "G":
+				for i := 0; i < l; i++ {
+					for j := 0; j < 1024; j++ {
+						for k := 0; k < 1024; k++ {
+							r1.Read(bt)
+							x, _ := w.Write(bt)
+							// 						d += uint64(x)
+							serveByte += uint64(x)
+						}
+					}
 				}
 			}
-			// 			fmt.Printf("\r")
 		}
 	}
 }
@@ -728,7 +759,7 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.status = 200
 	}
-	w.length = len(b)
+	w.length += len(b)
 	return w.ResponseWriter.Write(b)
 }
 
@@ -741,7 +772,13 @@ func LogHandler(next http.Handler) http.Handler {
 		r = r.WithContext(ctx)
 		next.ServeHTTP(&writer, r)
 
-		res := fmt.Sprintf("%v %v %v %v %v %v", r.RemoteAddr, writer.status, writer.length, r.Method, r.Host+r.RequestURI, time.Since(t1))
+		range_ := r.Header.Get("Range")
+		if len(range_) > 0 {
+			range_ = range_[6:]
+		} else {
+			range_ = "-"
+		}
+		res := fmt.Sprintf("%v %v %v %v %v %v %v", r.RemoteAddr, writer.status, writer.length, r.Method, range_, r.Host+r.RequestURI, time.Since(t1))
 		if *colors {
 			log.Println(color.Sprintf("@{g}%s@{|}", res))
 		} else {
