@@ -6,7 +6,7 @@
 
 * Creation Date : 08-28-2016
 
-* Last Modified : Fri 15 Sep 2017 01:26:55 AM UTC
+* Last Modified : Fri 23 Mar 2018 12:06:25 AM UTC
 
 * Created By : Kiyor
 
@@ -91,14 +91,18 @@ func (l *LogFinalizer) Finalize(request *socks5.Request, conn net.Conn, ctx cont
 		user = val
 	}
 	resolveDur := request.ResolveTime.Sub(request.StartTime)
+	connDur := request.ConnTime.Sub(request.ResolveTime)
 	finishDur := request.FinishTime.Sub(request.StartTime)
 	if resolveDur == -1<<63 {
 		resolveDur = 0
 	}
-	if finishDur == -1<<63 {
-		finishDur = resolveDur
+	if connDur == -1<<63 {
+		connDur = resolveDur
 	}
-	l.log.Println(user, request.RemoteAddr.String(), strings.Replace(request.DestAddr.String(), " ", "", -1), request.ReqByte, request.RespByte, resolveDur, finishDur)
+	if finishDur == -1<<63 {
+		finishDur = connDur + resolveDur
+	}
+	l.log.Println(user, request.RemoteAddr.String(), strings.Replace(request.DestAddr.String(), " ", "", -1), request.ReqByte, request.RespByte, resolveDur, connDur, finishDur)
 	return nil
 }
 
