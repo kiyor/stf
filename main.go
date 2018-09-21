@@ -6,7 +6,7 @@
 
 * Creation Date : 12-14-2015
 
-* Last Modified : Wed 07 Mar 2018 10:56:32 AM UTC
+* Last Modified : Sun 15 Apr 2018 03:44:36 PM UTC
 
 * Created By : Kiyor
 
@@ -22,12 +22,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/NYTimes/gziphandler"
-	"github.com/dustin/go-humanize"
-	"github.com/kiyor/go-socks5"
-	"github.com/viki-org/dnscache"
-	"github.com/wsxiaoys/terminal/color"
-	"golang.org/x/net/proxy"
 	"io"
 	"io/ioutil"
 	"log"
@@ -46,6 +40,13 @@ import (
 	"sync"
 	"text/template"
 	"time"
+
+	"github.com/NYTimes/gziphandler"
+	"github.com/dustin/go-humanize"
+	"github.com/kiyor/go-socks5"
+	"github.com/viki-org/dnscache"
+	"github.com/wsxiaoys/terminal/color"
+	"golang.org/x/net/proxy"
 )
 
 var (
