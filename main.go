@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"math"
 	// 	"crypto/tls"
 	"compress/gzip"
 	"encoding/json"
@@ -25,8 +26,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"math/rand"
-	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -43,6 +42,7 @@ import (
 
 	"github.com/NYTimes/gziphandler"
 	"github.com/dustin/go-humanize"
+	"github.com/juju/ratelimit"
 	"github.com/kiyor/go-socks5"
 	"github.com/viki-org/dnscache"
 	"github.com/wsxiaoys/terminal/color"
@@ -57,11 +57,13 @@ var (
 
 	httpAuthFlag *string = flag.String("httpauth", "", "http base auth mode, import txt/json/string")
 
-	sock           *bool   = flag.Bool("socks5", false, "socks5 mode")
-	sockAuth       *string = flag.String("socks5auth", "", "socks5 auth mode, import txt/json/string")
-	sockHosts      *string = flag.String("socks5hosts", "", "socks5 hosts file")
-	sockNext       *string = flag.String("socks5next", "", "socks5 proxy chan next point")
-	sockNoResolver *bool   = flag.Bool("socks5noresolver", false, "socks5 without resolver for proxy chan")
+	sock              *bool   = flag.Bool("socks5", false, "socks5 mode")
+	sockAuth          *string = flag.String("socks5auth", "", "socks5 auth mode, import txt/json/string")
+	sockHosts         *string = flag.String("socks5hosts", "", "socks5 hosts file")
+	sockNext          *string = flag.String("socks5next", "", "socks5 proxy chan next point")
+	sockNoResolver    *bool   = flag.Bool("socks5noresolver", false, "socks5 without resolver for proxy chan")
+	socksInRateLimit          = flag.Int64("socks5in", math.MaxInt64, "socks5 max input ratelimit (byte upload)")
+	socksOutRateLimit         = flag.Int64("socks5out", math.MaxInt64, "socks5 max input ratelimit (byte download)")
 
 	httpTunnel *bool = flag.Bool("tunnel", false, "http tunnel mode")
 	uploadonly *bool = flag.Bool("uploadonly", false, "upload only POST/PUT")
@@ -282,17 +284,7 @@ func main() {
 		panic(err)
 	}
 	h = wrap(h)
-	// 	h = gziphandler.GzipHandler(h)
-	// 	}
 	mux.Handle("/", LogHandler(h))
-
-	/*
-		if len(*httpAuthFlag) > 0 {
-			mux.Handle("/", LogHandler(httpAuth(handler)))
-		} else {
-			mux.Handle("/", LogHandler(handler))
-		}
-	*/
 
 	log.Println("Listening on", getips())
 	if proxyMethod {
@@ -310,6 +302,12 @@ func main() {
 			conf.Resolver = &Resolver{dnscache.New(time.Minute * 5)}
 			conf.Rewriter = new(Rewriter)
 			conf.Rules = new(FireWallRuleSet)
+			if *socksInRateLimit != math.MaxInt64 {
+				conf.InBucket = ratelimit.NewBucketWithRate(float64(*socksInRateLimit), *socksInRateLimit)
+			}
+			if *socksOutRateLimit != math.MaxInt64 {
+				conf.OutBucket = ratelimit.NewBucketWithRate(float64(*socksOutRateLimit), *socksOutRateLimit)
+			}
 			if *sockNext != "" {
 				var a *proxy.Auth
 				p := strings.Split(*sockNext, ":")
@@ -334,7 +332,8 @@ func main() {
 				}
 			}
 			conf.Logger = log.New(ioutil.Discard, "", log.LstdFlags)
-			conf.Finalizer = &LogFinalizer{log.New(os.Stdout, "", log.LstdFlags)}
+			// 			conf.Logger = log.New(os.Stdout, "[socks5] ", log.LstdFlags)
+			conf.Finalizer = &LogFinalizer{log.New(os.Stdout, "[socks5] ", log.LstdFlags)}
 			if *sockAuth != "" {
 				cred := parseSocks5Auth(*sockAuth)
 				cator := socks5.UserPassAuthenticator{Credentials: cred}
@@ -637,154 +636,4 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Fprintf(w, "File uploaded successfully : %s\n", p)
-}
-
-func testFileHandler(w http.ResponseWriter, r *http.Request) {
-	if reTestFile.MatchString(r.URL.Path) {
-		iStr := reTestFile.FindStringSubmatch(r.URL.Path)[1]
-		l, err := strconv.Atoi(iStr)
-		if err != nil {
-			return
-		}
-		s := reTestFile.FindStringSubmatch(r.URL.Path)[2]
-		if len(reTestFile.FindStringSubmatch(r.URL.Path)) > 3 {
-			ext := mime.TypeByExtension(reTestFile.FindStringSubmatch(r.URL.Path)[3])
-			if len(ext) > 0 {
-				w.Header().Set("Content-Type", ext)
-			}
-		}
-		if len(r.Header.Get("X-Cache-Control")) > 0 {
-			w.Header().Set("Cache-Control", r.Header.Get("X-Cache-Control"))
-		} else {
-			w.Header().Set("Cache-Control", *testFileCC)
-		}
-		params := r.URL.Query()
-		for k, v := range params {
-			w.Header().Set(k, v[0])
-		}
-		s1 := rand.NewSource(time.Now().UnixNano())
-		r1 := rand.New(s1)
-		bt := make([]byte, 1024)
-
-		var rangeReq bool
-		var start, end, contentSize, contentLength int
-		switch s {
-		case "b", "B":
-			contentSize = l
-		case "k", "K":
-			contentSize = l * 1024
-		case "m", "M":
-			contentSize = l * 1024 * 1024
-		case "g", "G":
-			contentSize = l * 1024 * 1024 * 1024
-		}
-		if len(r.Header.Get("Range")) > 0 {
-			reRange := regexp.MustCompile(`^bytes=(\d+)-(\d+)$`)
-			if reRange.MatchString(r.Header.Get("Range")) {
-				start_ := reRange.FindStringSubmatch(r.Header.Get("Range"))[1]
-				end_ := reRange.FindStringSubmatch(r.Header.Get("Range"))[2]
-				start, _ = strconv.Atoi(start_)
-				end, _ = strconv.Atoi(end_)
-				rangeReq = true
-			}
-			reRange = regexp.MustCompile(`^bytes=(\d+)-$`)
-			if reRange.MatchString(r.Header.Get("Range")) {
-				start_ := reRange.FindStringSubmatch(r.Header.Get("Range"))[1]
-				start, _ = strconv.Atoi(start_)
-				end = contentSize - 1
-				rangeReq = true
-			}
-			contentLength = end - start + 1
-		} else {
-			contentLength = contentSize
-		}
-		w.Header().Set("Content-Length", strconv.Itoa(contentLength))
-		w.Header().Set("Last-Modified", time.Now().Format(http.TimeFormat))
-		if rangeReq {
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, contentSize))
-			w.WriteHeader(206)
-			b := make([]byte, contentLength)
-			r1.Read(b)
-			x, _ := w.Write(b)
-			serveByte += uint64(x)
-		} else {
-			switch s {
-			case "b", "B":
-				b := make([]byte, l)
-				r1.Read(b)
-				x, _ := w.Write(b)
-				serveByte += uint64(x)
-			case "k", "K":
-				for i := 0; i < l; i++ {
-					r1.Read(bt)
-					x, _ := w.Write(bt)
-					serveByte += uint64(x)
-				}
-			case "m", "M":
-				for i := 0; i < l; i++ {
-					for j := 0; j < 1024; j++ {
-						r1.Read(bt)
-						x, _ := w.Write(bt)
-						// 					d += uint64(x)
-						serveByte += uint64(x)
-					}
-				}
-			case "g", "G":
-				for i := 0; i < l; i++ {
-					for j := 0; j < 1024; j++ {
-						for k := 0; k < 1024; k++ {
-							r1.Read(bt)
-							x, _ := w.Write(bt)
-							// 						d += uint64(x)
-							serveByte += uint64(x)
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-	length int
-}
-
-func (w *statusWriter) WriteHeader(status int) {
-	w.status = status
-	w.ResponseWriter.WriteHeader(status)
-}
-
-func (w *statusWriter) Write(b []byte) (int, error) {
-	if w.status == 0 {
-		w.status = 200
-	}
-	w.length += len(b)
-	return w.ResponseWriter.Write(b)
-}
-
-func LogHandler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t1 := time.Now()
-		ctx := context.Background()
-		writer := statusWriter{w, 0, 0}
-
-		r = r.WithContext(ctx)
-		next.ServeHTTP(&writer, r)
-
-		range_ := r.Header.Get("Range")
-		if len(range_) > 0 {
-			range_ = range_[6:]
-		} else {
-			range_ = "-"
-		}
-		res := fmt.Sprintf("%v %v %v %v %v %v %v", r.RemoteAddr, writer.status, writer.length, r.Method, range_, r.Host+r.RequestURI, time.Since(t1))
-		if *colors {
-			log.Println(color.Sprintf("@{g}%s@{|}", res))
-		} else {
-			log.Println(res)
-		}
-
-	})
 }

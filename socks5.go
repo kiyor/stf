@@ -18,15 +18,16 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"github.com/kiyor/go-socks5"
-	"github.com/kiyor/subnettool"
-	"github.com/viki-org/dnscache"
 	"io/ioutil"
 	"log"
 	"net"
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/kiyor/go-socks5"
+	"github.com/kiyor/subnettool"
+	"github.com/viki-org/dnscache"
 )
 
 var (
