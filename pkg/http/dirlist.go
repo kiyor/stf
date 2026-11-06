@@ -12,17 +12,18 @@
 
 _._._._._._._._._._._._._._._._._._._._._.*/
 
-package main
+package http
 
 import (
 	"fmt"
-	"github.com/dustin/go-humanize"
 	"html/template"
 	"net/http"
 	"net/url"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/dustin/go-humanize"
 )
 
 var (

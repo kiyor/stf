@@ -12,17 +12,18 @@
 
 _._._._._._._._._._._._._._._._._._._._._.*/
 
-package main
+package tcp
 
 import (
-	"golang.org/x/net/proxy"
 	"log"
 	"net"
 	"strings"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
-func toDial(s string) func(network, address string) (net.Conn, error) {
+func ToDial(s string) func(network, address string) (net.Conn, error) {
 	if s == "[ip:port](:user:pass)" {
 		return (&net.Dialer{
 			Timeout: 5 * time.Second,

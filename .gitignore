@@ -1,0 +1,17 @@
+# Build artifacts
+/stf
+/stf_arm
+*.exe
+*.test
+*.out
+
+# Local test data
+uploads/
+/stf.txt
+/test.txt
+
+# Backup / temp
+*.backup
+*.swp
+*~
+.DS_Store

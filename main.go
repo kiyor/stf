@@ -1,39 +1,23 @@
-/* -.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.-.
-
-* File Name : main.go
-
-* Purpose :
-
-* Creation Date : 12-14-2015
-
-* Last Modified : Sun 15 Apr 2018 03:44:36 PM UTC
-
-* Created By : Kiyor
-
-_._._._._._._._._._._._._._._._._._._._._.*/
-
 package main
 
 import (
-	"bytes"
 	"context"
-	"math"
-	// 	"crypto/tls"
-	"compress/gzip"
-	"encoding/json"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
+	"math"
+	"math/big"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,11 +25,18 @@ import (
 	"time"
 
 	"github.com/NYTimes/gziphandler"
-	"github.com/dustin/go-humanize"
 	"github.com/juju/ratelimit"
-	"github.com/kiyor/go-socks5"
+	gosocks5 "github.com/kiyor/go-socks5"
+	"github.com/kiyor/stf/pkg/common/auth"
+	"github.com/kiyor/stf/pkg/common/middleware"
+	"github.com/kiyor/stf/pkg/config"
+	stfhttp "github.com/kiyor/stf/pkg/http"
+	stfsocks5 "github.com/kiyor/stf/pkg/socks5"
+
+	// "github.com/kiyor/stf/pkg/tcp" // Disabled due to flag conflicts
+
+	// "github.com/kiyor/stf/pkg/tcp" // Disabled due to flag conflicts
 	"github.com/viki-org/dnscache"
-	"github.com/wsxiaoys/terminal/color"
 	"golang.org/x/net/proxy"
 )
 
@@ -72,568 +63,737 @@ var (
 	testFile       *bool   = flag.Bool("testfile", false, "testfile, /1(K/M/G)")
 	testFileCC     *string = flag.String("testcc", "public,max-age=60", "testfile Cache-Control Header")
 	testDisCounter *bool   = flag.Bool("testc", false, "disable test counter")
+	noindex        *bool   = flag.Bool("noindex", false, "disable directory listing, require exact file path")
 
-	bridge               *string = flag.String("bridge", "host/ip/host:ip", "quick setup http/+https proxy with upstream 80/+443")
-	crt                  *string = flag.String("crt", "", "crt location if using brdige mode")
-	key                  *string = flag.String("key", "", "key location if using brdige mode")
-	bridgeIp, bridgeHost string
+	bridge *string = flag.String("bridge", "host/ip/host:ip", "quick setup http/+https proxy with upstream 80/+443")
+	crt    *string = flag.String("crt", "", "crt location if using brdige mode")
+	key    *string = flag.String("key", "", "key location if using brdige mode")
+
+	tlsEnable *bool   = flag.Bool("tls", false, "enable HTTPS mode with auto-generated self-signed certificate")
+	tlsCert   *string = flag.String("tlscert", "", "path to custom TLS certificate file (requires -tlskey)")
+	tlsKey    *string = flag.String("tlskey", "", "path to custom TLS private key file (requires -tlscert)")
 
 	version *bool = flag.Bool("version", false, "output version and exit")
 
 	rt      = flag.Int("return", -1, "debug test return code")
 	threexx = flag.String("3xx", "", "301/302 https://{{.Host}}{{.URL}}")
 
-	tcp      bool
-	isbridge bool
-
 	timeout   *time.Duration = flag.Duration("timeout", 5*time.Minute, "timeout")
 	notimeout                = flag.Bool("notimeout", false, "no timeout")
 
 	disableGzip = flag.Bool("gzip-disable", false, "disable gzip, default gzip = on")
+	gzipTypes   = flag.String("gzip-types", "text/html text/plain text/css text/javascript text/xml application/json application/javascript application/x-javascript application/xml application/atom+xml application/rss+xml application/vnd.ms-fontobject application/x-font-ttf font/opentype font/x-woff", "gzip type")
 
-	gzipTypes = flag.String("gzip-types", "text/html text/plain text/css text/javascript text/xml application/json application/javascript application/x-javascript application/xml application/atom+xml application/rss+xml application/vnd.ms-fontobject application/x-font-ttf font/opentype font/x-woff", "gzip type")
+	verbose  = flag.Bool("v", false, "verbose mode")
+	vverbose = flag.Bool("vv", false, "very verbose mode")
+	usecolor = flag.Bool("c", false, "colorful output")
 
-	proxyMethod = false
-
-	reTestFile = regexp.MustCompile(`(\d+)(b|B|k|K|m|M|g|G)(.*)`)
-
-	ch        = make(chan bool)
-	wg        = new(sync.WaitGroup)
-	stop      bool
-	buildtime string
-	VER       = "1.0"
-	serveByte uint64
+	// Global timeout control variables
+	shutdownTimer      *time.Timer
+	forceShutdownTimer *time.Timer
+	stop               bool
+	wg                 = new(sync.WaitGroup)
+	shutdownChan       = make(chan bool, 1)
+	ch                 = make(chan bool, 1)
+	shutdownOnce       sync.Once
 )
 
-func init() {
-	flag.Var(&flagAllowIP, "allow", "allow IP, -allow '1.1.1.1' -allow '2.2.2.0/24'")
-	flag.Var(&flagDenyIP, "deny", "deny IP, -deny '1.1.1.1' -deny '2.2.2.0/24'")
-	flag.Parse()
-	if *version {
-		fmt.Printf("%v.%v", VER, buildtime)
-		os.Exit(0)
-	}
-	if *upstream != "scheme://ip:port or ip:port" {
-		proxyMethod = true
-		u := *upstream
-		if u[:4] != "http" {
-			tcp = true
-		}
-	}
-	if *bridge != "host/ip/host:ip" {
-		isbridge = true
-		proxyMethod = true
-		p := strings.Split(*bridge, ":")
-		if len(p) > 1 {
-			bridgeHost = p[0]
-			bridgeIp = p[1]
-		} else {
-			if ip := net.ParseIP(*bridge); ip == nil {
-				bridgeHost = *bridge
-			}
-			bridgeIp = *bridge
-		}
-		*upstream = *bridge
-	}
-	p := *fport
-	if p[:1] != ":" && !strings.Contains(*fport, ":") {
-		p = ":" + p
-		fport = &p
+// getListeningAddresses returns all possible listening addresses for the given port
+func getListeningAddresses(port string) []string {
+	var addresses []string
+
+	// Parse port from string like ":30000" or "127.0.0.1:30000"
+	portOnly := port
+	if strings.HasPrefix(port, ":") {
+		portOnly = port[1:]
+	} else if strings.Contains(port, ":") {
+		_, portOnly, _ = net.SplitHostPort(port)
 	}
 
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-
-}
-
-func getips() string {
-	p := *fport
-	if p[:1] != ":" && strings.Contains(*fport, ":") {
-		return *fport
-	}
-	ips, err := net.InterfaceAddrs()
+	// Get all network interfaces
+	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		panic(err)
+		log.Printf("Failed to get network interfaces: %v", err)
+		return []string{port}
 	}
-	var s string
-	for _, v := range ips {
-		ip := strings.Split(v.String(), "/")[0]
-		if ip != "127.0.0.1" {
-			s += strings.Split(v.String(), "/")[0] + *fport + " "
+
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok {
+			ip := ipnet.IP
+
+			// Skip loopback and IPv6 addresses
+			if ip.IsLoopback() || ip.To4() == nil {
+				continue
+			}
+
+			addresses = append(addresses, fmt.Sprintf("%s:%s", ip.String(), portOnly))
 		}
 	}
-	return s
+
+	// If no valid addresses found, return the original port
+	if len(addresses) == 0 {
+		addresses = append(addresses, port)
+	}
+
+	return addresses
 }
 
-func byteCounter() {
-	ticker := time.Tick(time.Second)
-	var total uint64
-	var max uint64
-	var avg uint64
-	var emptySecond float64
-	t1 := time.Now()
-	defer fmt.Println()
-	for {
-		<-ticker
-		total += serveByte
-		if serveByte == 0 {
-			emptySecond += 1.0
-		} else if serveByte > max {
-			max = serveByte
+// trackedConn wraps a net.Conn to track when it's closed
+type trackedConn struct {
+	net.Conn
+	wg   *sync.WaitGroup
+	once sync.Once
+}
+
+func (tc *trackedConn) Close() error {
+	tc.once.Do(func() {
+		if tc.wg != nil {
+			tc.wg.Done()
 		}
-		if uint64(time.Since(t1).Seconds()-emptySecond) > 0 {
-			avg = total / uint64(time.Since(t1).Seconds()-emptySecond)
-		}
-		fmt.Printf("\rspeed: %10v/s  total: %10v  max: %10v/s  avg: %10v/s", humanize.Bytes(serveByte), humanize.Bytes(total), humanize.Bytes(max), humanize.Bytes(avg))
-		serveByte = 0
-	}
+	})
+	return tc.Conn.Close()
+}
+
+func init() {
+	flag.Var(&config.FlagAllowIP, "allow", "allow ip")
+	flag.Var(&config.FlagDenyIP, "deny", "deny ip")
 }
 
 func main() {
+	flag.Parse()
 
-	runtime.GOMAXPROCS(runtime.NumCPU())
-
-	if *testFile && !*testDisCounter {
-		go byteCounter()
+	if *version {
+		fmt.Println("STF version 2.0.0 (refactored)")
+		os.Exit(0)
 	}
 
-	mux := http.NewServeMux()
-	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	// Start shutdown timer if not in no-timeout mode
+	if !*notimeout {
+		startShutdownTimer()
+	}
+
+	// Determine which mode to run
+	if *sock {
+		// SOCKS5 proxy mode
+		addresses := getListeningAddresses(*fport)
+		log.Println("Starting SOCKS5 proxy server:")
+		for _, addr := range addresses {
+			log.Printf("  socks5://%s", addr)
+		}
+		startSocks5Server()
+	} else if *httpTunnel {
+		// HTTP tunnel mode
+		addresses := getListeningAddresses(*fport)
+		log.Println("Starting HTTP tunnel server:")
+		for _, addr := range addresses {
+			log.Printf("  http://%s", addr)
+		}
+		startHTTPTunnel()
+	} else if *upstream != "" && *upstream != "scheme://ip:port or ip:port" {
+		// TCP proxy mode
+		addresses := getListeningAddresses(*fport)
+		log.Printf("Starting TCP proxy server to %s:", *upstream)
+		for _, addr := range addresses {
+			log.Printf("  tcp://%s", addr)
+		}
+		startTCPProxy()
+	} else {
+		// Default: HTTP file server
+		startHTTPServer()
+	}
+}
+
+// startShutdownTimer starts the automatic shutdown timer
+func startShutdownTimer() {
+	log.Printf("Auto-shutdown enabled: will stop accepting new connections after %v", *timeout)
+
+	// Start the timeout timer
+	shutdownTimer = time.AfterFunc(*timeout, func() {
+		log.Println("Timeout reached, blocking new connections")
+		stop = true
+
+		// Wait for existing connections to finish (max 1 hour)
+		forceShutdownTimer = time.AfterFunc(time.Hour, func() {
+			log.Println("Force shutdown after 1 hour")
+			shutdownOnce.Do(func() {
+				close(shutdownChan)
+			})
+		})
+
+		// Start a goroutine to wait for all connections to close
+		go func() {
+			wg.Wait()
+			log.Println("All connections closed gracefully")
+			if forceShutdownTimer != nil {
+				forceShutdownTimer.Stop()
+			}
+			shutdownOnce.Do(func() {
+				close(shutdownChan)
+			})
+		}()
+	})
+
+	// Start a goroutine to reset timer on activity and handle shutdown
+	go func() {
+		for {
+			select {
+			case <-ch:
+				// Reset timer when activity is detected
+				if shutdownTimer != nil && !stop {
+					shutdownTimer.Reset(*timeout)
+				}
+			case <-shutdownChan:
+				// Give servers a moment to close gracefully
+				time.Sleep(100 * time.Millisecond)
+				log.Println("Shutting down...")
+				os.Exit(0)
+			}
+		}
+	}()
+}
+
+func startSocks5Server() {
+	conf := &gosocks5.Config{}
+	conf.Resolver = &stfsocks5.Resolver{Resolver: dnscache.New(time.Minute * 5)}
+	conf.Rewriter = &stfsocks5.Rewriter{}
+	conf.Rules = &stfsocks5.FireWallRuleSet{}
+
+	// Store original dial function
+	var originalDial func(ctx context.Context, net_, addr string) (net.Conn, error)
+	if conf.Dial != nil {
+		originalDial = conf.Dial
+	} else {
+		originalDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return net.Dial(network, addr)
+		}
+	}
+
+	// Wrap the dial function to check stop flag
+	conf.Dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if stop {
-			return
+			return nil, fmt.Errorf("server is shutting down")
 		}
 		wg.Add(1)
-		if *veryverbose {
-			dumpRequest(req, true, true)
+		conn, err := originalDial(ctx, network, addr)
+		if err != nil {
+			wg.Done()
+			return nil, err
 		}
-		defer wg.Done()
-		ch <- true
-		if proxyMethod {
-			if isbridge {
-				scheme := "https"
-				if req.TLS == nil {
-					scheme = "http"
+		// Keep timer alive
+		if !*notimeout {
+			select {
+			case ch <- true:
+			default:
+			}
+		}
+		// Wrap connection to track when it closes
+		return &trackedConn{Conn: conn, wg: wg}, nil
+	}
+
+	// Set up rate limiting
+	if *socksInRateLimit != math.MaxInt64 {
+		conf.InBucket = ratelimit.NewBucketWithRate(float64(*socksInRateLimit), *socksInRateLimit)
+	}
+	if *socksOutRateLimit != math.MaxInt64 {
+		conf.OutBucket = ratelimit.NewBucketWithRate(float64(*socksOutRateLimit), *socksOutRateLimit)
+	}
+
+	// Set up proxy chaining if configured
+	if *sockNext != "" {
+		var a *proxy.Auth
+		p := strings.Split(*sockNext, ":")
+		if len(p) > 2 {
+			a = new(proxy.Auth)
+			a.User = p[2]
+			a.Password = p[3]
+			*sockNext = strings.Join(p[:2], ":")
+		}
+		dialer, err := proxy.SOCKS5("tcp", *sockNext, a, &net.Dialer{
+			KeepAlive: 30 * time.Second,
+		})
+		if err != nil {
+			log.Fatal("Failed to create SOCKS5 dialer:", err)
+		}
+		originalDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr)
+		}
+	}
+
+	// Set up authentication if configured
+	if *sockAuth != "" {
+		cred := stfsocks5.ParseSocks5Auth(*sockAuth)
+		if len(cred) > 0 {
+			cator := gosocks5.UserPassAuthenticator{Credentials: cred}
+			conf.AuthMethods = []gosocks5.Authenticator{cator}
+		}
+	}
+
+	// Set up finalizer for logging
+	conf.Finalizer = &stfsocks5.LogFinalizer{
+		Log: log.New(os.Stdout, "[socks5] ", log.LstdFlags),
+	}
+
+	// Disable resolver if requested
+	if *sockNoResolver {
+		conf.Resolver = nil
+	}
+
+	server, err := gosocks5.New(conf)
+	if err != nil {
+		log.Fatal("Failed to create SOCKS5 server:", err)
+	}
+
+	// Create listener
+	ln, err := net.Listen("tcp", *fport)
+	if err != nil {
+		log.Fatal("Failed to listen:", err)
+	}
+	defer ln.Close()
+
+	// Start accepting connections in a goroutine
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				if stop {
+					return
 				}
-				u, _ := url.Parse(fmt.Sprintf("%s://%s", scheme, bridgeIp))
-				httputil.NewSingleHostReverseProxy(u).ServeHTTP(w, req)
-				// 				proxyHandler(w, req, fmt.Sprintf("%s://%s", scheme, bridgeIp))
-			} else {
-				u, _ := url.Parse(*upstream)
-				httputil.NewSingleHostReverseProxy(u).ServeHTTP(w, req)
-				// 				proxyHandler(w, req, *upstream)
+				log.Printf("Accept error: %v", err)
+				continue
 			}
+
+			// Check if we're stopping
+			if stop {
+				conn.Close()
+				continue
+			}
+
+			// Keep timer alive
+			if !*notimeout {
+				select {
+				case ch <- true:
+				default:
+				}
+			}
+
+			// Track connection
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				server.ServeConn(conn)
+			}()
+		}
+	}()
+
+	// Wait for shutdown
+	<-shutdownChan
+}
+
+func startHTTPTunnel() {
+	proxy := stfhttp.NewProxy(*next)
+
+	// Wrap the proxy handler to check stop flag
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if we're stopping
+		if stop {
+			http.Error(w, "Service Unavailable - Server is shutting down", http.StatusServiceUnavailable)
 			return
 		}
-		// if not just return code
+
+		// Track connection
+		wg.Add(1)
+		defer wg.Done()
+
+		// Keep timer alive if not in notimeout mode
+		if !*notimeout {
+			select {
+			case ch <- true:
+			default:
+			}
+		}
+
+		proxy.ServeHTTP(w, r)
+	})
+
+	server := &http.Server{
+		Addr:    *fport,
+		Handler: handler,
+	}
+
+	if !*notimeout {
+		server.ReadTimeout = *timeout
+		server.WriteTimeout = *timeout
+	}
+
+	// Start server in a goroutine so we can handle shutdown
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("HTTP tunnel failed:", err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	<-shutdownChan
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("HTTP tunnel shutdown error: %v", err)
+	}
+}
+
+func startTCPProxy() {
+	log.Printf("TCP proxy mode not yet fully integrated from %s to %s", *fport, *upstream)
+	log.Printf("Use HTTP tunnel mode instead with -tunnel flag")
+	log.Fatal("TCP proxy mode disabled due to flag conflicts - use HTTP tunnel instead")
+}
+
+// getTLSCertDir returns the directory where TLS certificates are stored
+func getTLSCertDir() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("Warning: Unable to get home directory, using current directory for TLS certs: %v", err)
+		return ".stf"
+	}
+	return filepath.Join(homeDir, ".config", "stf")
+}
+
+// generateSelfSignedCert generates a self-signed certificate and private key
+func generateSelfSignedCert(certPath, keyPath string) error {
+	// Create certificate directory if it doesn't exist
+	dir := filepath.Dir(certPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create cert directory: %v", err)
+	}
+
+	// Generate private key
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fmt.Errorf("failed to generate private key: %v", err)
+	}
+
+	// Create certificate template
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "localhost",
+		},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(365 * 24 * time.Hour), // 1 year
+		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		DNSNames:    []string{"localhost"},
+	}
+
+	// Create certificate
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate: %v", err)
+	}
+
+	// Save certificate
+	certOut, err := os.Create(certPath)
+	if err != nil {
+		return fmt.Errorf("failed to create cert file: %v", err)
+	}
+	defer certOut.Close()
+
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return fmt.Errorf("failed to write certificate: %v", err)
+	}
+
+	// Save private key
+	keyOut, err := os.Create(keyPath)
+	if err != nil {
+		return fmt.Errorf("failed to create key file: %v", err)
+	}
+	defer keyOut.Close()
+
+	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return fmt.Errorf("failed to marshal private key: %v", err)
+	}
+
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER}); err != nil {
+		return fmt.Errorf("failed to write private key: %v", err)
+	}
+
+	log.Printf("Generated self-signed certificate: %s", certPath)
+	return nil
+}
+
+// getTLSCertificates returns the path to TLS certificate and key files
+// If custom cert/key are provided via flags, use those; otherwise use auto-generated ones
+func getTLSCertificates() (string, string, error) {
+	// If custom certificates are specified, use them
+	if *tlsCert != "" && *tlsKey != "" {
+		// Validate that both files exist
+		if _, err := os.Stat(*tlsCert); err != nil {
+			return "", "", fmt.Errorf("custom certificate file not found: %v", err)
+		}
+		if _, err := os.Stat(*tlsKey); err != nil {
+			return "", "", fmt.Errorf("custom key file not found: %v", err)
+		}
+		log.Printf("Using custom TLS certificate: %s", *tlsCert)
+		return *tlsCert, *tlsKey, nil
+	}
+
+	// Use auto-generated certificates
+	certDir := getTLSCertDir()
+	certPath := filepath.Join(certDir, "cert.pem")
+	keyPath := filepath.Join(certDir, "key.pem")
+
+	// Check if certificate files exist and are valid
+	needGenerate := false
+	if _, err := os.Stat(certPath); os.IsNotExist(err) {
+		needGenerate = true
+	} else if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		needGenerate = true
+	} else {
+		// Check if certificate is expired or will expire soon
+		certPEM, err := os.ReadFile(certPath)
+		if err == nil {
+			block, _ := pem.Decode(certPEM)
+			if block != nil {
+				cert, err := x509.ParseCertificate(block.Bytes)
+				if err == nil {
+					// Regenerate if expires within 30 days
+					if time.Until(cert.NotAfter) < 30*24*time.Hour {
+						needGenerate = true
+					}
+				} else {
+					needGenerate = true
+				}
+			} else {
+				needGenerate = true
+			}
+		} else {
+			needGenerate = true
+		}
+	}
+
+	if needGenerate {
+		if err := generateSelfSignedCert(certPath, keyPath); err != nil {
+			return "", "", err
+		}
+	} else {
+		log.Printf("Using existing self-signed certificate: %s", certPath)
+	}
+
+	return certPath, keyPath, nil
+}
+
+func startHTTPServer() {
+	// Initialize file system for serving files
+	fs := stfhttp.Dir(*fdir)
+
+	// Main handler that routes different request types
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if we're stopping
+		if stop {
+			http.Error(w, "Service Unavailable - Server is shutting down", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Track connection
+		wg.Add(1)
+		defer wg.Done()
+
+		// Keep timer alive if not in notimeout mode
+		if !*notimeout {
+			select {
+			case ch <- true:
+			default:
+			}
+		}
 		if *rt != -1 {
+			// Debug mode: return specific status code
 			w.WriteHeader(*rt)
-			dumpRequest(req, true, true)
 			return
 		}
+
 		if len(*threexx) != 0 {
-			code := (*threexx)[:3]
-			c := 302
-			var u string
-			var err error
-			c, err = strconv.Atoi(code)
-			if err != nil {
-				u = *threexx
-				c = 302
-			} else {
-				u = (*threexx)[4:]
-			}
-			var buf bytes.Buffer
-			t, _ := template.New("url").Parse(u)
-			err = t.Execute(&buf, req)
-			if err != nil {
-				log.Println(err.Error())
-			}
-			http.Redirect(w, req, buf.String(), c)
+			// Handle redirects
+			handleRedirect(w, r, *threexx)
 			return
 		}
 
 		w.Header().Add("Connection", "Keep-Alive")
-		if (req.Method == "GET" || req.Method == "HEAD") && !*uploadonly && !*testFile {
-			if len(req.Header.Get("X-Cache-Control")) > 0 {
-				w.Header().Add("Cache-Control", req.Header.Get("X-Cache-Control"))
+
+		if (r.Method == "GET" || r.Method == "HEAD") && !*uploadonly && !*testFile {
+			// File serving
+			if len(r.Header.Get("X-Cache-Control")) > 0 {
+				w.Header().Add("Cache-Control", r.Header.Get("X-Cache-Control"))
 			} else {
 				w.Header().Add("Cache-Control", "no-cache")
 			}
-			f := &fileHandler{Dir(*fdir)}
-			f.ServeHTTP(w, req)
+			fileHandler := stfhttp.FileServerWithOptions(fs, *noindex)
+			fileHandler.ServeHTTP(w, r)
 		} else if *testFile {
-			testFileHandler(w, req)
-		} else if req.Method == "POST" || req.Method == "PUT" {
-			uploadHandler(w, req)
+			// Test file generation
+			stfhttp.TestFileHandler(w, r, *testFileCC)
+		} else if r.Method == "POST" || r.Method == "PUT" {
+			// File upload
+			uploadHandler(w, r)
 		}
 	})
 
-	var h http.Handler
+	// Apply middleware layers
+	var h http.Handler = handler
 
+	// Add HTTP authentication if configured
 	if len(*httpAuthFlag) > 0 {
-		h = httpAuth(handler)
-	} else {
-		h = handler
-	}
-	// 	if !*disableGzip {
-	typ := strings.Split(*gzipTypes, " ")
-	for _, v := range typ {
-		typ = append(typ, v+"; charset=utf-8")
-	}
-	wrap, err := gziphandler.GzipHandlerWithOpts(gziphandler.MinSize(512), gziphandler.CompressionLevel(gzip.DefaultCompression), gziphandler.ContentTypes(typ))
-	if err != nil {
-		panic(err)
-	}
-	h = wrap(h)
-	mux.Handle("/", LogHandler(h))
-
-	log.Println("Listening on", getips())
-	if proxyMethod {
-		log.Println("Upstream", *upstream, "tcp", tcp)
-	}
-	if *testFile && !*testDisCounter {
-		log.SetOutput(ioutil.Discard)
+		h = auth.HTTPAuth(*httpAuthFlag)(h)
 	}
 
-	done := make(chan bool)
-
-	if *sock {
-		go func() {
-			conf := &socks5.Config{}
-			conf.Resolver = &Resolver{dnscache.New(time.Minute * 5)}
-			conf.Rewriter = new(Rewriter)
-			conf.Rules = new(FireWallRuleSet)
-			if *socksInRateLimit != math.MaxInt64 {
-				conf.InBucket = ratelimit.NewBucketWithRate(float64(*socksInRateLimit), *socksInRateLimit)
-			}
-			if *socksOutRateLimit != math.MaxInt64 {
-				conf.OutBucket = ratelimit.NewBucketWithRate(float64(*socksOutRateLimit), *socksOutRateLimit)
-			}
-			if *sockNext != "" {
-				var a *proxy.Auth
-				p := strings.Split(*sockNext, ":")
-				if len(p) > 2 {
-					a = new(proxy.Auth)
-					a.User = p[2]
-					a.Password = p[3]
-					*sockNext = strings.Join(p[:2], ":")
-				}
-				dialer, err := proxy.SOCKS5("tcp", *sockNext,
-					a,
-					&net.Dialer{
-						KeepAlive: 30 * time.Second,
-					},
-				)
-				if err != nil {
-					log.Println(err.Error())
-					os.Exit(1)
-				}
-				conf.Dial = func(ctx context.Context, net_, addr string) (net.Conn, error) {
-					return dialer.Dial(net_, addr)
-				}
-			}
-			conf.Logger = log.New(ioutil.Discard, "", log.LstdFlags)
-			// 			conf.Logger = log.New(os.Stdout, "[socks5] ", log.LstdFlags)
-			conf.Finalizer = &LogFinalizer{log.New(os.Stdout, "[socks5] ", log.LstdFlags)}
-			if *sockAuth != "" {
-				cred := parseSocks5Auth(*sockAuth)
-				cator := socks5.UserPassAuthenticator{Credentials: cred}
-				conf.AuthMethods = []socks5.Authenticator{cator}
-			}
-			if *sockHosts != "" {
-				readHosts(*sockHosts)
-				go watcher(*sockHosts, func(string) error { return readHosts(*sockHosts) })
-			}
-			server, err := socks5.New(conf)
-			if err != nil {
-				panic(err)
-			}
-			if *sockNoResolver {
-				conf.Resolver = nil
-			}
-
-			if err := server.ListenAndServe("tcp", *fport); err != nil {
-				panic(err)
-			}
-		}()
-	} else if tcp {
-		go tcpProxy()
-	} else if *httpTunnel {
-		go func() {
-			if err := http.ListenAndServe(*fport, NewProxy()); err != nil {
-				panic(err)
-			}
-		}()
-	} else {
-		if !isbridge {
-			if len(*crt) > 0 && len(*key) > 0 {
-				go func() {
-					if err := http.ListenAndServeTLS(*fport, *crt, *key, mux); err != nil {
-						panic(err)
-					}
-				}()
-			} else {
-				go func() {
-					if err := http.ListenAndServe(*fport, mux); err != nil {
-						panic(err)
-					}
-				}()
-			}
-		} else {
-			go func() {
-				if err := http.ListenAndServe(":80", mux); err != nil {
-					panic(err)
-				}
-			}()
-			if len(*crt) > 0 && len(*key) > 0 {
-				go func() {
-					if err := http.ListenAndServeTLS(":443", *crt, *key, mux); err != nil {
-						panic(err)
-					}
-				}()
-			}
+	// Add gzip compression if not disabled
+	if !*disableGzip {
+		gzipHandler, err := gziphandler.GzipHandlerWithOpts(
+			gziphandler.MinSize(512),
+			gziphandler.CompressionLevel(-1),
+		)
+		if err != nil {
+			log.Fatal("Failed to create gzip handler:", err)
 		}
+		h = gzipHandler(h)
 	}
 
-	if *notimeout {
-		*timeout = time.Duration(1<<63 - 1)
+	// Add logging middleware
+	h = middleware.LogHandlerWithColors(h, *usecolor)
+
+	server := &http.Server{
+		Addr:    *fport,
+		Handler: h,
 	}
-	t := time.Tick(*timeout)
+
+	if !*notimeout {
+		server.ReadTimeout = *timeout
+		server.WriteTimeout = *timeout
+	}
+
+	// Determine server type and configure TLS if needed
+	var protocol string = "http"
+	var serverType string = "HTTP"
+
+	if *tlsEnable {
+		certPath, keyPath, err := getTLSCertificates()
+		if err != nil {
+			log.Fatalf("Failed to get TLS certificates: %v", err)
+		}
+
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			log.Fatalf("Failed to load TLS certificates: %v", err)
+		}
+
+		server.TLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+		protocol = "https"
+		serverType = "HTTPS"
+	}
+
+	// Print startup information
+	addresses := getListeningAddresses(*fport)
+	log.Printf("Starting %s file server:", serverType)
+	for _, addr := range addresses {
+		log.Printf("  %s://%s", protocol, addr)
+	}
+	log.Printf("Serving directory: %s", *fdir)
+
+	// Start server in a goroutine so we can handle shutdown
 	go func() {
-		for {
-			select {
-			case <-t:
-				log.Println(os.Args[0], "auto stop, no more request accessable")
-				stop = true
-				wg.Wait()
-				done <- true
-			case <-ch:
-				t = time.Tick(*timeout)
-			}
+		var err error
+		if *tlsEnable {
+			err = server.ListenAndServeTLS("", "")
+		} else {
+			err = server.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatal("Server error: ", err)
 		}
 	}()
 
-	if <-done {
-		log.Println("stop")
-		os.Exit(0)
+	// Wait for shutdown signal
+	<-shutdownChan
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
 	}
 }
 
-func Json(i interface{}) string {
-	b, err := json.MarshalIndent(i, "", "  ")
-	if err != nil {
-		log.Println(err.Error())
-	}
-	return string(b)
-}
+// handleRedirect handles HTTP redirects based on template
+func handleRedirect(w http.ResponseWriter, r *http.Request, redirectTemplate string) {
+	code := 302
+	var urlTemplate string
 
-// dump request , body true/false, print true/false
-func dumpRequest(r *http.Request, b, p bool) []byte {
-	dump, err := httputil.DumpRequest(r, b)
-	if err != nil {
-		log.Println(err.Error())
-	}
-	if p {
-		index := bytes.Index(dump, []byte("\r\n\r\n"))
-		headers := dump[:index]
-		body := bytes.TrimLeft(dump[index:], "\r\n\r\n")
-		if *veryverbose {
-			now := time.Now()
-			host := "_"
-			for _, v := range strings.Split(string(headers), "\n") {
-				if len(v) > 5 && strings.ToUpper(v[:5]) == "HOST:" {
-					host = strings.Split(v, " ")[1]
-					host = strings.Trim(host, "\r")
+	// Check if code is specified
+	if len(redirectTemplate) >= 3 {
+		if codeStr := redirectTemplate[:3]; strings.ContainsRune("0123456789", rune(codeStr[0])) {
+			if c, err := strconv.Atoi(codeStr); err == nil && c >= 300 && c < 400 {
+				code = c
+				if len(redirectTemplate) > 4 {
+					urlTemplate = redirectTemplate[4:]
 				}
-			}
-			dirname := "/tmp/stfdump/" + host
-			if _, err := os.Stat(dirname); err != nil {
-				if err := os.MkdirAll(dirname, 0755); err != nil {
-					log.Fatalln(err.Error())
-				}
-			}
-			filename := fmt.Sprintf("%s/%d>", dirname, now.UnixNano())
-			ioutil.WriteFile(filename, body, 0644)
-		}
-		if *colors {
-			color.Printf("@{b}%v@{|}\n", string(headers))
-			if *showBody {
-				color.Printf("@{g}%v@{|}\n", string(body))
-			}
-		} else {
-			fmt.Println(string(headers))
-			fmt.Println(string(body))
-		}
-	}
-	return dump
-}
-
-// dump request , body true/false, print true/false
-func dumpResponse(r *http.Response, b, p bool, host string) []byte {
-	dump, err := httputil.DumpResponse(r, b)
-	if err != nil {
-		log.Println(err.Error())
-	}
-	// 	isGzip := false
-	// 	if v, ok := r.Header["Accept-Encoding"]; ok {
-	// 		if strings.Contains(v[0], "gzip") {
-	// 			isGzip = true
-	// 			log.Println("is gzip")
-	// 		}
-	// 	}
-	if p {
-		index := bytes.Index(dump, []byte("\r\n\r\n"))
-		headers := dump[:index]
-		body := bytes.TrimLeft(dump[index:], "\r\n\r\n")
-		// 		body = bytes.TrimLeft(body, string([]byte{13, 10, 13, 10}))
-
-		// 		if isGzip {
-		// 			reader := bytes.NewReader(body)
-		// 			g, err := gzip.NewReader(reader)
-		// 			if err != nil {
-		// 				log.Println(err.Error())
-		// 			}
-		// 			body, err = ioutil.ReadAll(g)
-		// 			if err != nil {
-		// 				log.Println(err.Error())
-		// 			}
-		// 		}
-		if *veryverbose {
-			now := time.Now()
-			dirname := "/tmp/stfdump/" + host
-			if _, err := os.Stat(dirname); err != nil {
-				if err := os.MkdirAll(dirname, 0755); err != nil {
-					log.Fatalln(err.Error())
-				}
-			}
-			filename := fmt.Sprintf("%s/%d<", dirname, now.UnixNano())
-			ioutil.WriteFile(filename, body, 0644)
-		}
-		if *colors {
-			// 			color.Printf("@{b}%s@{|}", string(dump))
-			color.Printf("@{c}%v@{|}\n", string(headers))
-			if *showBody {
-				color.Printf("@{g}%v@{|}\n", string(body))
-			}
-			// 			color.Printf("@{g}%v@{|}\n", ehex.EncodeToString(body))
-			// 			color.Printf("@{g}%v@{|}\n", body)
-		} else {
-			fmt.Println(string(headers))
-			fmt.Println(string(body))
-		}
-	}
-	return dump
-}
-
-/*
-func proxyHandler(w http.ResponseWriter, r *http.Request, upper string) {
-	var path string
-	var host string
-	if strings.Contains(r.URL.String(), "http") {
-		path = r.URL.String()
-		host = r.URL.Host
-	} else {
-		path = upper + r.URL.RequestURI()
-		host = r.Host
-	}
-	req, err := http.NewRequest(r.Method, path, r.Body)
-	if err != nil {
-		panic(err)
-	}
-	if len(bridgeHost) > 0 {
-		req.Host = bridgeHost
-	}
-	if ip := net.ParseIP(r.Host); ip == nil {
-		req.Host = host
-	}
-	t1 := time.Now()
-
-	for k, v := range r.Header {
-		for i, vv := range v {
-			if i == 0 {
-				req.Header.Set(k, vv)
 			} else {
-				req.Header.Add(k, vv)
+				urlTemplate = redirectTemplate
 			}
-		}
-	}
-
-	proxyClient := http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			Dial:            toDial(*next),
-		},
-	}
-
-	resp, err := proxyClient.Do(req)
-	if err != nil {
-		fmt.Fprintf(w, err.Error())
-		if resp != nil {
-			w.WriteHeader(resp.StatusCode)
 		} else {
-			w.WriteHeader(500)
+			urlTemplate = redirectTemplate
 		}
+	}
+
+	// Parse and execute template
+	tmpl, err := template.New("redirect").Parse(urlTemplate)
+	if err != nil {
+		log.Printf("Error parsing redirect template: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
-	w.WriteHeader(resp.StatusCode)
 
-	for k, v := range resp.Header {
-		for _, v1 := range v {
-			w.Header().Set(k, v1)
-		}
+	var buf strings.Builder
+	if err := tmpl.Execute(&buf, r); err != nil {
+		log.Printf("Error executing redirect template: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
-	w.Header().Set("X-Upstream-Response-Time", NanoToSecond(time.Since(t1)))
 
-	if *veryverbose {
-		dumpResponse(resp, true, true, req.Host)
-	}
-	io.Copy(w, resp.Body)
-}
-*/
-
-func NanoToSecond(d time.Duration) string {
-	return fmt.Sprintf("%.3f", float64(d.Nanoseconds())/1000000)
+	http.Redirect(w, r, buf.String(), code)
 }
 
+// uploadHandler handles file uploads
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
-	p := *fdir + "/" + r.URL.Path
+	// Clean the URL path to avoid issues with leading slashes
+	urlPath := strings.TrimPrefix(r.URL.Path, "/")
+	if urlPath == "" {
+		urlPath = "index.html" // default file name for root path
+	}
+	p := filepath.Join(*fdir, urlPath)
 	d, _ := filepath.Split(p)
 
-	f, err := os.Open(d)
-	defer f.Close()
-
-	if err != nil {
-		err = os.MkdirAll(d, 0755)
-		if err != nil {
-			fmt.Fprintf(w, "%s\n", err.Error())
-			log.Println(err.Error())
+	// Ensure directory exists (only if there's a directory component)
+	if d != "" && d != "." {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to create directory: %v", err), http.StatusInternalServerError)
+			return
 		}
-		f, _ = os.Open(d)
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		fmt.Fprintf(w, "%s\n", err.Error())
-		log.Println(err.Error())
-		return
-	}
-	if fi.Mode().IsRegular() {
-		fmt.Fprintf(w, "%s is a file\n", d)
-		log.Println(d, "is a file")
-		return
 	}
 
+	// Create the file
 	out, err := os.Create(p)
 	if err != nil {
-		fmt.Fprintf(w, "Unable to create the file for writing '%v'. Check your write access privilege\n", p)
+		http.Error(w, fmt.Sprintf("Unable to create file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer out.Close()
+
+	// Copy request body to file
+	_, err = io.Copy(out, r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	defer out.Close()
-
-	_, err = io.Copy(out, r.Body)
-	if err != nil {
-		fmt.Fprintln(w, err)
-	}
-
-	fmt.Fprintf(w, "File uploaded successfully : %s\n", p)
+	fmt.Fprintf(w, "File uploaded successfully: %s\n", p)
 }

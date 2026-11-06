@@ -12,22 +12,20 @@
 
 _._._._._._._._._._._._._._._._._._._._._.*/
 
-package main
-
-import ()
+package config
 
 var (
-	flagAllowIP flagSliceString
-	flagDenyIP  flagSliceString
+	FlagAllowIP = make(FlagSliceString, 0)
+	FlagDenyIP  = make(FlagSliceString, 0)
 )
 
-type flagSliceString []string
+type FlagSliceString []string
 
-func (i *flagSliceString) String() string {
+func (i *FlagSliceString) String() string {
 	return ""
 }
 
-func (i *flagSliceString) Set(value string) error {
+func (i *FlagSliceString) Set(value string) error {
 	*i = append(*i, value)
 	return nil
 }

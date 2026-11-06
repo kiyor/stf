@@ -1,4 +1,4 @@
-package main
+package http
 
 import (
 	"fmt"
@@ -10,7 +10,12 @@ import (
 	"time"
 )
 
-func testFileHandler(w http.ResponseWriter, r *http.Request) {
+var (
+	reTestFile = regexp.MustCompile(`(\d+)(b|B|k|K|m|M|g|G)(.*)`)
+	serveByte  uint64
+)
+
+func TestFileHandler(w http.ResponseWriter, r *http.Request, testFileCC string) {
 	// 	qs := r.URL.Query()
 	if reTestFile.MatchString(r.URL.Path) {
 		iStr := reTestFile.FindStringSubmatch(r.URL.Path)[1]
@@ -28,7 +33,7 @@ func testFileHandler(w http.ResponseWriter, r *http.Request) {
 		if len(r.Header.Get("X-Cache-Control")) > 0 {
 			w.Header().Set("Cache-Control", r.Header.Get("X-Cache-Control"))
 		} else {
-			w.Header().Set("Cache-Control", *testFileCC)
+			w.Header().Set("Cache-Control", testFileCC)
 		}
 		params := r.URL.Query()
 		for k, v := range params {

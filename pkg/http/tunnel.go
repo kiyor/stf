@@ -12,7 +12,7 @@
 
 _._._._._._._._._._._._._._._._._._._._._.*/
 
-package main
+package http
 
 import (
 	"io"
@@ -21,18 +21,22 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
-type Pxy struct{}
+type Pxy struct {
+	Next string
+}
 
-func NewProxy() *Pxy {
-	return &Pxy{}
+func NewProxy(next string) *Pxy {
+	return &Pxy{Next: next}
 }
 
 // ServeHTTP is the main handler for all requests.
 func (p *Pxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	t1 := time.Now()
-	dial := toDial(*next)
+	dial := toDial(p.Next)
 	var req, rec int64
 	if r.Method == "CONNECT" {
 		host := r.URL.Host
@@ -142,4 +146,32 @@ func Copy(dst io.Writer, src io.Reader, errCh chan error, sizeCh chan int64) {
 
 type closeWriter interface {
 	CloseWrite() error
+}
+
+// toDial creates a dial function with optional SOCKS5 proxy support
+func toDial(s string) func(network, address string) (net.Conn, error) {
+	if s == "[ip:port](:user:pass)" {
+		return (&net.Dialer{
+			Timeout: 5 * time.Second,
+		}).Dial
+	}
+	var a *proxy.Auth
+	p := strings.Split(s, ":")
+	if len(p) > 2 {
+		a = new(proxy.Auth)
+		a.User = p[2]
+		a.Password = p[3]
+		s = strings.Join(p[:2], ":")
+	}
+	dialer, err := proxy.SOCKS5("tcp", s,
+		a,
+		&net.Dialer{
+			KeepAlive: 5 * time.Second,
+			Timeout:   5 * time.Second,
+		},
+	)
+	if err != nil {
+		log.Println(err.Error())
+	}
+	return dialer.Dial
 }

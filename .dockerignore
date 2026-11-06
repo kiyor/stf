@@ -1,0 +1,34 @@
+# Build artifacts
+stf
+*.exe
+*.test
+*.out
+
+# Directories
+.git
+.github
+uploads/
+/tmp/
+
+# Documentation and plans
+*.md
+!README.md
+plan-*.md
+
+# Test files
+*.txt
+test_*.sh
+
+# Temporary files
+*.swp
+*.swo
+*~
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Backup files
+*.backup

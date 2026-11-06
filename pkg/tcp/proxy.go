@@ -12,17 +12,19 @@
 
 _._._._._._._._._._._._._._._._._._._._._.*/
 
-package main
+package tcp
 
 import (
 	"flag"
 	"fmt"
-	"github.com/kiyor/go-tcp-proxy"
 	"log"
 	"net"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
+
+	proxy "github.com/kiyor/go-tcp-proxy"
 )
 
 var (
@@ -39,21 +41,22 @@ var (
 	replace     = flag.String("replace", "", "replace regex (in the form '/regex1/replacer1/regex2/replace2/' if / is delimiter)")
 )
 
-func tcpProxy() {
-	laddr, err := net.ResolveTCPAddr("tcp", *fport)
+// TCPProxy starts a TCP proxy server with the given configuration
+func TCPProxy(config *ProxyConfig, wg *sync.WaitGroup) {
+	laddr, err := net.ResolveTCPAddr("tcp", config.LocalAddr)
 	if err != nil {
 		log.Println("Failed to resolve local address:", err)
 		os.Exit(1)
 	}
 
-	raddr, err := net.ResolveTCPAddr("tcp", *upstream)
+	raddr, err := net.ResolveTCPAddr("tcp", config.RemoteAddr)
 	if err != nil {
-		log.Println("Failed to resolve remote address: %s", err)
+		log.Println("Failed to resolve remote address:", err)
 		os.Exit(1)
 	}
 	listener, err := net.ListenTCP("tcp", laddr)
 	if err != nil {
-		log.Println("Failed to open local port to listen: %s", err)
+		log.Println("Failed to open local port to listen:", err)
 		os.Exit(1)
 	}
 
@@ -67,9 +70,9 @@ func tcpProxy() {
 	for {
 		conn, err := listener.AcceptTCP()
 		if err != nil {
-			log.Println("Failed to accept connection '%s'", err)
+			log.Println("Failed to accept connection:", err)
 		}
-		if stop {
+		if config.IsStop() {
 			conn.Close()
 			continue
 		}
@@ -78,7 +81,7 @@ func tcpProxy() {
 		var p *proxy.Proxy
 		if *unwrapTLS {
 			log.Println("Unwrapping TLS")
-			p = proxy.NewTLSUnwrapped(conn, laddr, raddr, *upstream)
+			p = proxy.NewTLSUnwrapped(conn, laddr, raddr, config.RemoteAddr)
 		} else {
 			p = proxy.New(conn, laddr, raddr)
 		}

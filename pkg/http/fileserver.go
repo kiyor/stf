@@ -18,7 +18,7 @@ _._._._._._._._._._._._._._._._._._._._._.*/
 
 // HTTP file system request handler
 
-package main
+package http
 
 import (
 	"errors"
@@ -529,6 +529,11 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, modtime time.Tim
 
 // name is '/'-separated, not filepath.Separator.
 func serveFile(w http.ResponseWriter, r *http.Request, fs FileSystem, name string, redirect bool) {
+	serveFileWithOptions(w, r, fs, name, redirect, false)
+}
+
+// serveFileWithOptions provides serveFile functionality with additional options
+func serveFileWithOptions(w http.ResponseWriter, r *http.Request, fs FileSystem, name string, redirect bool, noindex bool) {
 	const indexPage = "/index.html"
 
 	// redirect .../index.html to .../
@@ -597,12 +602,23 @@ func serveFile(w http.ResponseWriter, r *http.Request, fs FileSystem, name strin
 
 	// Still a directory? (we didn't find an index.html file)
 	if d.IsDir() {
+		if noindex {
+			// When noindex is enabled, deny directory listing
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
+			return
+		}
 		if checkIfModifiedSince(w, r, d.ModTime()) == condFalse {
 			writeNotModified(w)
 			return
 		}
 		w.Header().Set("Last-Modified", d.ModTime().UTC().Format(http.TimeFormat))
 		dirList1(w, f, r)
+		return
+	}
+
+	// Check if this is a markdown file and render as HTML
+	if IsMarkdownFile(name) {
+		ServeMarkdown(w, r, f, name, d.ModTime())
 		return
 	}
 
@@ -679,7 +695,8 @@ func containsDotDot(v string) bool {
 func isSlashRune(r rune) bool { return r == '/' || r == '\\' }
 
 type fileHandler struct {
-	root FileSystem
+	root    FileSystem
+	noindex bool
 }
 
 // FileServer returns a handler that serves HTTP requests
@@ -688,13 +705,19 @@ type fileHandler struct {
 // To use the operating system's file system implementation,
 // use http.Dir:
 //
-//     http.Handle("/", http.FileServer(http.Dir("/tmp")))
+//	http.Handle("/", http.FileServer(http.Dir("/tmp")))
 //
 // As a special case, the returned file server redirects any request
 // ending in "/index.html" to the same path, without the final
 // "index.html".
 func FileServer(root FileSystem) http.Handler {
-	return &fileHandler{root}
+	return &fileHandler{root, false}
+}
+
+// FileServerWithOptions returns a handler that serves HTTP requests
+// with the contents of the file system rooted at root, with additional options.
+func FileServerWithOptions(root FileSystem, noindex bool) http.Handler {
+	return &fileHandler{root, noindex}
 }
 
 func (f *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -703,7 +726,7 @@ func (f *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		upath = "/" + upath
 		r.URL.Path = upath
 	}
-	serveFile(w, r, f.root, path.Clean(upath), true)
+	serveFileWithOptions(w, r, f.root, path.Clean(upath), true, f.noindex)
 }
 
 // httpRange specifies the byte range to be sent to the client.

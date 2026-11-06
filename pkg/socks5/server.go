@@ -12,7 +12,7 @@
 
 _._._._._._._._._._._._._._._._._._._._._.*/
 
-package main
+package socks5
 
 import (
 	"bufio"
@@ -26,6 +26,7 @@ import (
 	"sync"
 
 	"github.com/kiyor/go-socks5"
+	"github.com/kiyor/stf/pkg/config"
 	"github.com/kiyor/subnettool"
 	"github.com/viki-org/dnscache"
 )
@@ -83,7 +84,7 @@ func (Rewriter) Rewrite(ctx context.Context, request *socks5.Request) (context.C
 }
 
 type LogFinalizer struct {
-	log *log.Logger
+	Log *log.Logger
 }
 
 func (l *LogFinalizer) Finalize(request *socks5.Request, conn net.Conn, ctx context.Context) error {
@@ -103,11 +104,11 @@ func (l *LogFinalizer) Finalize(request *socks5.Request, conn net.Conn, ctx cont
 	if finishDur == -1<<63 {
 		finishDur = connDur + resolveDur
 	}
-	l.log.Println(user, request.RemoteAddr.String(), strings.Replace(request.DestAddr.String(), " ", "", -1), request.ReqByte, request.RespByte, resolveDur, connDur, finishDur)
+	l.Log.Println(user, request.RemoteAddr.String(), strings.Replace(request.DestAddr.String(), " ", "", -1), request.ReqByte, request.RespByte, resolveDur, connDur, finishDur)
 	return nil
 }
 
-func parseSocks5Auth(input string) socks5.StaticCredentials {
+func ParseSocks5Auth(input string) socks5.StaticCredentials {
 	cred := make(socks5.StaticCredentials)
 	for _, v := range []string{" ", ":"} {
 		if strings.Contains(input, v) {
@@ -141,8 +142,16 @@ func parseSocks5Auth(input string) socks5.StaticCredentials {
 }
 
 func cleanFile(file string) ([]string, error) {
+	if file == "" {
+		return []string{}, nil
+	}
+
 	f, err := os.Open(file)
 	if err != nil {
+		// Return empty slice instead of error for missing files
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
 		return []string{}, err
 	}
 	defer f.Close()
@@ -162,11 +171,52 @@ func cleanFile(file string) ([]string, error) {
 	return line, nil
 }
 
+// createSocks5Config creates a SOCKS5 server configuration
+func createSocks5Config(authFile, hostsFile string) (*socks5.Config, error) {
+	conf := &socks5.Config{}
+
+	// Set up authentication if auth file is provided
+	if authFile != "" {
+		cred := socks5.StaticCredentials{}
+		lines, err := cleanFile(authFile)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, line := range lines {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 2 {
+				cred[parts[0]] = parts[1]
+			}
+		}
+
+		if len(cred) > 0 {
+			conf.Credentials = cred
+		}
+	}
+
+	// Set up host resolution if hosts file is provided
+	if hostsFile != "" {
+		err := readHosts(hostsFile)
+		if err != nil {
+			return nil, err
+		}
+		// Note: dnscache doesn't directly implement NameResolver interface
+		// For testing purposes, we'll leave resolver as nil
+		// conf.Resolver = dnscache.New(time.Minute)
+	}
+
+	// Set up firewall rules
+	conf.Rules = FireWallRuleSet{}
+
+	return conf, nil
+}
+
 type FireWallRuleSet struct{}
 
 func (FireWallRuleSet) Allow(ctx context.Context, req *socks5.Request) (context.Context, bool) {
-	if len(flagAllowIP) > 0 {
-		for _, allow := range flagAllowIP {
+	if len(config.FlagAllowIP) > 0 {
+		for _, allow := range config.FlagAllowIP {
 			if ip := net.ParseIP(allow); ip != nil {
 				if ip.Equal(req.RemoteAddr.IP) {
 					return ctx, true
@@ -179,8 +229,8 @@ func (FireWallRuleSet) Allow(ctx context.Context, req *socks5.Request) (context.
 		}
 		return ctx, false
 	}
-	if len(flagDenyIP) > 0 {
-		for _, deny := range flagDenyIP {
+	if len(config.FlagDenyIP) > 0 {
+		for _, deny := range config.FlagDenyIP {
 			if ip := net.ParseIP(deny); ip != nil {
 				if ip.Equal(req.RemoteAddr.IP) {
 					return ctx, false

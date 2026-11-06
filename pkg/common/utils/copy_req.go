@@ -12,7 +12,7 @@
 
 _._._._._._._._._._._._._._._._._._._._._.*/
 
-package main
+package utils
 
 import (
 	"crypto/tls"

@@ -12,12 +12,13 @@
 
 _._._._._._._._._._._._._._._._._._._._._.*/
 
-package main
+package utils
 
 import (
-	"github.com/fsnotify/fsnotify"
 	"log"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func watcher(file string, action func(string) error) {
