@@ -34,7 +34,9 @@ func ToDial(s string) func(network, address string) (net.Conn, error) {
 	if len(p) > 2 {
 		a = new(proxy.Auth)
 		a.User = p[2]
-		a.Password = p[3]
+		if len(p) > 3 {
+			a.Password = strings.Join(p[3:], ":")
+		}
 		s = strings.Join(p[:2], ":")
 	}
 	dialer, err := proxy.SOCKS5("tcp", s,
@@ -47,6 +49,7 @@ func ToDial(s string) func(network, address string) (net.Conn, error) {
 	)
 	if err != nil {
 		log.Println(err.Error())
+		return func(network, addr string) (net.Conn, error) { return nil, err }
 	}
 	return dialer.Dial
 }

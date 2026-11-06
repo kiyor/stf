@@ -15,9 +15,11 @@ _._._._._._._._._._._._._._._._._._._._._.*/
 package auth
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -75,18 +77,44 @@ func parseHTTPAuth(authSource string) (map[string]string, error) {
 }
 
 func httpCheck(user, pass string, authMap map[string]string) bool {
-	if expectedPass, exists := authMap[user]; exists {
-		return expectedPass == pass
+	expectedPass, exists := authMap[user]
+	// Compare in constant time; compare against a dummy when the user is unknown
+	// so response timing does not reveal valid user names.
+	if !exists {
+		expectedPass = "\x00invalid"
 	}
-	return false
+	ok := subtle.ConstantTimeCompare([]byte(expectedPass), []byte(pass)) == 1
+	return exists && ok
 }
 
-// HTTPAuth creates an HTTP Basic Authentication middleware
+// ValidateHTTPAuth reports whether authSource yields at least one credential.
+// Call it at startup so a typo'd auth file aborts instead of serving openly.
+func ValidateHTTPAuth(authSource string) error {
+	m, err := parseHTTPAuth(authSource)
+	if err != nil {
+		return err
+	}
+	if len(m) == 0 {
+		return fmt.Errorf("no credentials found in %q", authSource)
+	}
+	return nil
+}
+
+// HTTPAuth creates an HTTP Basic Authentication middleware. It fails closed:
+// if authSource is set but yields no credentials, every request is rejected.
 func HTTPAuth(authSource string) func(http.Handler) http.Handler {
-	authMap, _ := parseHTTPAuth(authSource) // Ignore error for now, empty map if failed
+	authMap, err := parseHTTPAuth(authSource)
+	misconfigured := authSource != "" && (err != nil || len(authMap) == 0)
+	if misconfigured {
+		log.Printf("http auth %q unusable (%v); rejecting all requests", authSource, err)
+	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if misconfigured {
+				http.Error(w, "Server auth misconfigured.", http.StatusInternalServerError)
+				return
+			}
 			if len(authMap) == 0 {
 				// No auth configured, allow all
 				next.ServeHTTP(w, r)

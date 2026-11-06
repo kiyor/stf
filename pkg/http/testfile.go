@@ -2,122 +2,104 @@ package http
 
 import (
 	"fmt"
+	"io"
 	"math/rand"
 	"mime"
 	"net/http"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
 var (
-	reTestFile = regexp.MustCompile(`(\d+)(b|B|k|K|m|M|g|G)(.*)`)
-	serveByte  uint64
+	reTestFile   = regexp.MustCompile(`(\d+)(b|B|k|K|m|M|g|G)(.*)`)
+	reRangeFull  = regexp.MustCompile(`^bytes=(\d+)-(\d+)$`)
+	reRangeStart = regexp.MustCompile(`^bytes=(\d+)-$`)
+	serveByte    uint64 // total bytes served; update with atomic.AddUint64
 )
 
-func TestFileHandler(w http.ResponseWriter, r *http.Request, testFileCC string) {
-	// 	qs := r.URL.Query()
-	if reTestFile.MatchString(r.URL.Path) {
-		iStr := reTestFile.FindStringSubmatch(r.URL.Path)[1]
-		l, err := strconv.Atoi(iStr)
-		if err != nil {
-			return
-		}
-		s := reTestFile.FindStringSubmatch(r.URL.Path)[2]
-		if len(reTestFile.FindStringSubmatch(r.URL.Path)) > 3 {
-			ext := mime.TypeByExtension(reTestFile.FindStringSubmatch(r.URL.Path)[3])
-			if len(ext) > 0 {
-				w.Header().Set("Content-Type", ext)
-			}
-		}
-		if len(r.Header.Get("X-Cache-Control")) > 0 {
-			w.Header().Set("Cache-Control", r.Header.Get("X-Cache-Control"))
-		} else {
-			w.Header().Set("Cache-Control", testFileCC)
-		}
-		params := r.URL.Query()
-		for k, v := range params {
-			w.Header().Set(k, v[0])
-		}
-		s1 := rand.NewSource(time.Now().UnixNano())
-		r1 := rand.New(s1)
-		bt := make([]byte, 1024)
+// maxTestFileSize caps generated test files (1 TiB) so size math cannot overflow.
+const maxTestFileSize = int64(1) << 40
 
-		var rangeReq bool
-		var start, end, contentSize, contentLength int
-		switch s {
-		case "b", "B":
-			contentSize = l
-		case "k", "K":
-			contentSize = l * 1024
-		case "m", "M":
-			contentSize = l * 1024 * 1024
-		case "g", "G":
-			contentSize = l * 1024 * 1024 * 1024
+// TestFileHandler serves a generated file of random bytes whose size comes from
+// the URL, e.g. /10M or /512k.bin. Data is streamed, never fully buffered.
+// Query parameters are copied into response headers (intended, for CDN tests).
+func TestFileHandler(w http.ResponseWriter, r *http.Request, testFileCC string) {
+	m := reTestFile.FindStringSubmatch(r.URL.Path)
+	if m == nil {
+		http.Error(w, "usage: /<n>{b,k,m,g}[.ext]", http.StatusNotFound)
+		return
+	}
+	l, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		http.Error(w, "size too large", http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+	var unit int64 = 1
+	switch m[2] {
+	case "k", "K":
+		unit = 1 << 10
+	case "m", "M":
+		unit = 1 << 20
+	case "g", "G":
+		unit = 1 << 30
+	}
+	if l > maxTestFileSize/unit {
+		http.Error(w, "size too large", http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+	contentSize := l * unit
+
+	if ext := mime.TypeByExtension(m[3]); len(ext) > 0 {
+		w.Header().Set("Content-Type", ext)
+	}
+	if len(r.Header.Get("X-Cache-Control")) > 0 {
+		w.Header().Set("Cache-Control", r.Header.Get("X-Cache-Control"))
+	} else {
+		w.Header().Set("Cache-Control", testFileCC)
+	}
+	for k, v := range r.URL.Query() {
+		w.Header().Set(k, v[0])
+	}
+
+	start, end := int64(0), contentSize-1
+	rangeReq := false
+	if rh := r.Header.Get("Range"); rh != "" {
+		if rm := reRangeFull.FindStringSubmatch(rh); rm != nil {
+			start, _ = strconv.ParseInt(rm[1], 10, 64)
+			end, _ = strconv.ParseInt(rm[2], 10, 64)
+			rangeReq = true
+		} else if rm := reRangeStart.FindStringSubmatch(rh); rm != nil {
+			start, _ = strconv.ParseInt(rm[1], 10, 64)
+			rangeReq = true
 		}
-		if len(r.Header.Get("Range")) > 0 {
-			reRange := regexp.MustCompile(`^bytes=(\d+)-(\d+)$`)
-			if reRange.MatchString(r.Header.Get("Range")) {
-				start_ := reRange.FindStringSubmatch(r.Header.Get("Range"))[1]
-				end_ := reRange.FindStringSubmatch(r.Header.Get("Range"))[2]
-				start, _ = strconv.Atoi(start_)
-				end, _ = strconv.Atoi(end_)
-				rangeReq = true
-			}
-			reRange = regexp.MustCompile(`^bytes=(\d+)-$`)
-			if reRange.MatchString(r.Header.Get("Range")) {
-				start_ := reRange.FindStringSubmatch(r.Header.Get("Range"))[1]
-				start, _ = strconv.Atoi(start_)
-				end = contentSize - 1
-				rangeReq = true
-			}
-			contentLength = end - start + 1
-		} else {
-			contentLength = contentSize
-		}
-		w.Header().Set("Content-Length", strconv.Itoa(contentLength))
-		w.Header().Set("Last-Modified", time.Now().Format(http.TimeFormat))
 		if rangeReq {
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, contentSize))
-			w.WriteHeader(206)
-			b := make([]byte, contentLength)
-			r1.Read(b)
-			x, _ := w.Write(b)
-			serveByte += uint64(x)
-		} else {
-			switch s {
-			case "b", "B":
-				b := make([]byte, l)
-				r1.Read(b)
-				x, _ := w.Write(b)
-				serveByte += uint64(x)
-			case "k", "K":
-				for i := 0; i < l; i++ {
-					r1.Read(bt)
-					x, _ := w.Write(bt)
-					serveByte += uint64(x)
-				}
-			case "m", "M":
-				for i := 0; i < l; i++ {
-					for j := 0; j < 1024; j++ {
-						r1.Read(bt)
-						x, _ := w.Write(bt)
-						// 					d += uint64(x)
-						serveByte += uint64(x)
-					}
-				}
-			case "g", "G":
-				for i := 0; i < l; i++ {
-					for j := 0; j < 1024; j++ {
-						for k := 0; k < 1024; k++ {
-							r1.Read(bt)
-							x, _ := w.Write(bt)
-							// 						d += uint64(x)
-							serveByte += uint64(x)
-						}
-					}
-				}
+			if end >= contentSize {
+				end = contentSize - 1
+			}
+			if start < 0 || start > end {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", contentSize))
+				http.Error(w, "range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
+				return
 			}
 		}
 	}
+	contentLength := end - start + 1
+	if contentLength < 0 {
+		contentLength = 0
+	}
+
+	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+	if rangeReq {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, contentSize))
+		w.WriteHeader(http.StatusPartialContent)
+	}
+	if r.Method == http.MethodHead {
+		return
+	}
+	src := rand.New(rand.NewSource(time.Now().UnixNano()))
+	n, _ := io.CopyN(w, src, contentLength)
+	atomic.AddUint64(&serveByte, uint64(n))
 }

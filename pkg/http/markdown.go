@@ -280,7 +280,9 @@ func RenderMarkdown(content []byte) []byte {
 	extensions := parser.CommonExtensions | parser.AutoHeadingIDs | parser.Footnotes | parser.Strikethrough | parser.Tables | parser.FencedCode | parser.Autolink
 	p := parser.NewWithExtensions(extensions)
 
-	htmlFlags := html.CommonFlags | html.HrefTargetBlank
+	// SkipHTML drops raw HTML and Safelink drops javascript:/data: links: uploads
+	// are on by default, so a served .md must not be able to run script (XSS).
+	htmlFlags := html.CommonFlags | html.HrefTargetBlank | html.SkipHTML | html.Safelink
 	opts := html.RendererOptions{Flags: htmlFlags}
 	renderer := html.NewRenderer(opts)
 

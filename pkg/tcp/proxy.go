@@ -15,6 +15,7 @@ _._._._._._._._._._._._._._._._._._._._._.*/
 package tcp
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -23,13 +24,15 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	proxy "github.com/kiyor/go-tcp-proxy"
 )
 
 var (
-	connid  = uint64(0)
-	matchid = uint64(0)
+	connid  atomic.Uint64
+	matchid atomic.Uint64
 
 	verbose     = flag.Bool("v", false, "display server actions")
 	veryverbose = flag.Bool("vv", false, "display server actions and all tcp data")
@@ -71,12 +74,17 @@ func TCPProxy(config *ProxyConfig, wg *sync.WaitGroup) {
 		conn, err := listener.AcceptTCP()
 		if err != nil {
 			log.Println("Failed to accept connection:", err)
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
 		if config.IsStop() {
 			conn.Close()
 			continue
 		}
-		connid++
+		id := connid.Add(1)
 
 		var p *proxy.Proxy
 		if *unwrapTLS {
@@ -92,7 +100,7 @@ func TCPProxy(config *ProxyConfig, wg *sync.WaitGroup) {
 		p.Log = proxy.ColorLogger{
 			Verbose:     *verbose,
 			VeryVerbose: *veryverbose,
-			Prefix:      fmt.Sprintf("%s #%03d ", conn.RemoteAddr().String(), connid),
+			Prefix:      fmt.Sprintf("%s #%03d ", conn.RemoteAddr().String(), id),
 			Color:       *colors,
 		}
 
@@ -114,8 +122,7 @@ func createMatcher(match string) func([]byte) {
 	return func(input []byte) {
 		ms := re.FindAll(input, -1)
 		for _, m := range ms {
-			matchid++
-			log.Printf("Match #%d: %s\n", matchid, string(m))
+			log.Printf("Match #%d: %s\n", matchid.Add(1), string(m))
 		}
 	}
 }

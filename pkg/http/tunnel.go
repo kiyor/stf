@@ -22,61 +22,107 @@ import (
 	"strings"
 	"time"
 
+	"errors"
 	"golang.org/x/net/proxy"
 )
 
 type Pxy struct {
-	Next string
+	Next      string
+	dial      func(network, address string) (net.Conn, error)
+	transport *http.Transport
 }
 
 func NewProxy(next string) *Pxy {
-	return &Pxy{Next: next}
+	dial := toDial(next)
+	return &Pxy{
+		Next: next,
+		dial: dial,
+		// One shared Transport: a Transport per request would keep its idle
+		// keep-alive connections open forever and leak file descriptors.
+		transport: &http.Transport{
+			Dial:                dial,
+			MaxIdleConnsPerHost: 8,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+}
+
+// hopHeaders are connection-specific and must not be forwarded (RFC 7230 6.1).
+var hopHeaders = []string{
+	"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate",
+	"Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade",
+}
+
+func stripHopHeaders(h http.Header) {
+	for _, f := range h["Connection"] {
+		for _, k := range strings.Split(f, ",") {
+			h.Del(strings.TrimSpace(k))
+		}
+	}
+	for _, k := range hopHeaders {
+		h.Del(k)
+	}
 }
 
 // ServeHTTP is the main handler for all requests.
 func (p *Pxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	t1 := time.Now()
-	dial := toDial(p.Next)
+	dial := p.dial
+	if dial == nil {
+		dial = toDial(p.Next)
+	}
 	var req, rec int64
 	if r.Method == "CONNECT" {
 		host := r.URL.Host
 		hij, ok := w.(http.Hijacker)
 		if !ok {
-			panic("HTTP Server does not support hijacking")
-		}
-
-		client, _, err := hij.Hijack()
-		if err != nil {
-			log.Println(err.Error())
+			http.Error(w, "hijacking not supported", http.StatusInternalServerError)
 			return
 		}
 
 		server, err := dial("tcp", host)
 		if err != nil {
 			log.Println(err.Error())
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
 			return
 		}
-		client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+		defer server.Close()
+
+		client, _, err := hij.Hijack()
+		if err != nil {
+			log.Println(err.Error())
+			return
+		}
+		defer client.Close()
+
+		if _, err := client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+			return
+		}
 
 		errCh := make(chan error, 2)
 		sizeCh := make(chan int64, 2)
 
 		go Copy(server, client, errCh, sizeCh)
 		go Copy(client, server, errCh, sizeCh)
+		// When either direction ends, close both sides so the other copy unblocks.
+		e := <-errCh
 		req = <-sizeCh
+		client.Close()
+		server.Close()
+		<-errCh
 		rec = <-sizeCh
-		for i := 0; i < 2; i++ {
-			e := <-errCh
-			if e != nil {
-				log.Println(err.Error())
-			}
+		if e != nil && !errors.Is(e, net.ErrClosed) {
+			log.Println(e.Error())
 		}
 	} else {
-		transport := &http.Transport{
-			Dial: dial,
+		transport := p.transport
+		if transport == nil {
+			transport = &http.Transport{Dial: dial}
+			defer transport.CloseIdleConnections()
 		}
-		outReq := new(http.Request)
-		*outReq = *r
+		outReq := r.Clone(r.Context())
+		outReq.RequestURI = ""
+		stripHopHeaders(outReq.Header)
 
 		if clientIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 			if prior, ok := outReq.Header["X-Forwarded-For"]; ok {
@@ -90,6 +136,8 @@ func (p *Pxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
+		defer res.Body.Close()
+		stripHopHeaders(res.Header)
 
 		for key, value := range res.Header {
 			for _, v := range value {
@@ -116,7 +164,6 @@ func (p *Pxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Println(err.Error())
 		}
-		res.Body.Close()
 	}
 
 	log.Println(r.RemoteAddr, req, rec, time.Since(t1))
@@ -160,7 +207,9 @@ func toDial(s string) func(network, address string) (net.Conn, error) {
 	if len(p) > 2 {
 		a = new(proxy.Auth)
 		a.User = p[2]
-		a.Password = p[3]
+		if len(p) > 3 {
+			a.Password = strings.Join(p[3:], ":")
+		}
 		s = strings.Join(p[:2], ":")
 	}
 	dialer, err := proxy.SOCKS5("tcp", s,
@@ -172,6 +221,7 @@ func toDial(s string) func(network, address string) (net.Conn, error) {
 	)
 	if err != nil {
 		log.Println(err.Error())
+		return func(network, addr string) (net.Conn, error) { return nil, err }
 	}
 	return dialer.Dial
 }

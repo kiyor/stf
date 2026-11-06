@@ -113,7 +113,7 @@ func ParseSocks5Auth(input string) socks5.StaticCredentials {
 	for _, v := range []string{" ", ":"} {
 		if strings.Contains(input, v) {
 			p := strings.Split(input, v)
-			for i := 0; i < len(p); i += 2 {
+			for i := 0; i+1 < len(p); i += 2 {
 				cred[p[i]] = p[i+1]
 			}
 			return cred

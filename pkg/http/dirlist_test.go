@@ -185,13 +185,9 @@ func TestDirList1ParentDirectory(t *testing.T) {
 
 	body := w.Body.String()
 
-	// Should contain parent directory link for subdirectories
-	if !strings.Contains(body, "Parent Directory") {
-		t.Error("dirList1() should contain Parent Directory link for subdirectories")
-	}
-
-	if !strings.Contains(body, "folder-open-o") {
-		t.Error("dirList1() should contain folder icon for parent directory")
+	// Subdirectory listings render a "<" back link to the parent.
+	if !strings.Contains(body, `<a href="/"><h1> &lt; </h1></a>`) {
+		t.Error("dirList1() should contain a back link to the parent directory")
 	}
 }
 
@@ -236,11 +232,12 @@ func TestDirList1FileSize(t *testing.T) {
 		t.Error("dirList1() should show file size for small.txt")
 	}
 
-	if !strings.Contains(body, "1.0 kB") && !strings.Contains(body, "1024") {
+	// Sizes use binary units (humanize.IBytes).
+	if !strings.Contains(body, "1.0 KiB") {
 		t.Error("dirList1() should show file size for medium.txt")
 	}
 
-	if !strings.Contains(body, "1.0 MB") && !strings.Contains(body, "1048576") {
+	if !strings.Contains(body, "1.0 MiB") {
 		t.Error("dirList1() should show file size for large.txt")
 	}
 }

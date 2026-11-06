@@ -1,10 +1,10 @@
 package middleware
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/kiyor/stf/pkg/common/utils"
@@ -20,15 +20,14 @@ func LogHandler(next http.Handler) http.Handler {
 func LogHandlerWithColors(next http.Handler, useColors bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t1 := time.Now()
-		ctx := context.Background()
 		writer := &utils.StatusWriter{ResponseWriter: w}
 
-		r = r.WithContext(ctx)
+		// Keep the request's own context so client disconnects cancel work.
 		next.ServeHTTP(writer, r)
 
 		range_ := r.Header.Get("Range")
 		if len(range_) > 0 {
-			range_ = range_[6:]
+			range_ = strings.TrimPrefix(range_, "bytes=")
 		} else {
 			range_ = "-"
 		}

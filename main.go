@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,10 +18,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"text/template"
 	"time"
 
@@ -89,13 +90,8 @@ var (
 	usecolor = flag.Bool("c", false, "colorful output")
 
 	// Global timeout control variables
-	shutdownTimer      *time.Timer
-	forceShutdownTimer *time.Timer
-	stop               bool
-	wg                 = new(sync.WaitGroup)
-	shutdownChan       = make(chan bool, 1)
-	ch                 = make(chan bool, 1)
-	shutdownOnce       sync.Once
+	// lc tracks in-flight work and drives the idle auto-shutdown; see lifecycle.go.
+	lc = newLifecycle()
 )
 
 // getListeningAddresses returns all possible listening addresses for the given port
@@ -138,22 +134,6 @@ func getListeningAddresses(port string) []string {
 	return addresses
 }
 
-// trackedConn wraps a net.Conn to track when it's closed
-type trackedConn struct {
-	net.Conn
-	wg   *sync.WaitGroup
-	once sync.Once
-}
-
-func (tc *trackedConn) Close() error {
-	tc.once.Do(func() {
-		if tc.wg != nil {
-			tc.wg.Done()
-		}
-	})
-	return tc.Conn.Close()
-}
-
 func init() {
 	flag.Var(&config.FlagAllowIP, "allow", "allow ip")
 	flag.Var(&config.FlagDenyIP, "deny", "deny ip")
@@ -165,6 +145,10 @@ func main() {
 	if *version {
 		fmt.Println("STF version 2.0.0 (refactored)")
 		os.Exit(0)
+	}
+
+	if err := validateFlags(); err != nil {
+		log.Fatal(err)
 	}
 
 	// Start shutdown timer if not in no-timeout mode
@@ -203,52 +187,36 @@ func main() {
 	}
 }
 
-// startShutdownTimer starts the automatic shutdown timer
-func startShutdownTimer() {
-	log.Printf("Auto-shutdown enabled: will stop accepting new connections after %v", *timeout)
-
-	// Start the timeout timer
-	shutdownTimer = time.AfterFunc(*timeout, func() {
-		log.Println("Timeout reached, blocking new connections")
-		stop = true
-
-		// Wait for existing connections to finish (max 1 hour)
-		forceShutdownTimer = time.AfterFunc(time.Hour, func() {
-			log.Println("Force shutdown after 1 hour")
-			shutdownOnce.Do(func() {
-				close(shutdownChan)
-			})
-		})
-
-		// Start a goroutine to wait for all connections to close
-		go func() {
-			wg.Wait()
-			log.Println("All connections closed gracefully")
-			if forceShutdownTimer != nil {
-				forceShutdownTimer.Stop()
-			}
-			shutdownOnce.Do(func() {
-				close(shutdownChan)
-			})
-		}()
-	})
-
-	// Start a goroutine to reset timer on activity and handle shutdown
-	go func() {
-		for {
-			select {
-			case <-ch:
-				// Reset timer when activity is detected
-				if shutdownTimer != nil && !stop {
-					shutdownTimer.Reset(*timeout)
-				}
-			case <-shutdownChan:
-				// Give servers a moment to close gracefully
-				time.Sleep(100 * time.Millisecond)
-				log.Println("Shutting down...")
-				os.Exit(0)
-			}
+// validateFlags rejects flag combinations that would otherwise misbehave at runtime.
+func validateFlags() error {
+	if *rt != -1 && (*rt < 100 || *rt > 999) {
+		return fmt.Errorf("-return %d: status code must be between 100 and 999", *rt)
+	}
+	if (*tlsCert != "") != (*tlsKey != "") {
+		return errors.New("-tlscert and -tlskey must be given together")
+	}
+	if *bridge != "host/ip/host:ip" {
+		return errors.New("-bridge is not implemented")
+	}
+	if !*notimeout && *timeout <= 0 {
+		return fmt.Errorf("-timeout must be positive (got %v); use -notimeout to disable", *timeout)
+	}
+	if len(*httpAuthFlag) > 0 {
+		if err := auth.ValidateHTTPAuth(*httpAuthFlag); err != nil {
+			return fmt.Errorf("http auth: %v", err)
 		}
+	}
+	return nil
+}
+
+// startShutdownTimer arms the idle auto-shutdown: the server exits after
+// -timeout with no active requests/connections. Running transfers are never cut off.
+func startShutdownTimer() {
+	log.Printf("Auto-shutdown enabled: will exit after %v idle", *timeout)
+	lc.startIdleTimer(*timeout)
+	go func() {
+		<-lc.Done()
+		log.Println("Idle timeout reached, shutting down")
 	}()
 }
 
@@ -268,26 +236,13 @@ func startSocks5Server() {
 		}
 	}
 
-	// Wrap the dial function to check stop flag
+	// Refuse new outbound dials once shutting down. Connection lifetime is
+	// tracked per accepted client connection below.
 	conf.Dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if stop {
+		if lc.isStopping() {
 			return nil, fmt.Errorf("server is shutting down")
 		}
-		wg.Add(1)
-		conn, err := originalDial(ctx, network, addr)
-		if err != nil {
-			wg.Done()
-			return nil, err
-		}
-		// Keep timer alive
-		if !*notimeout {
-			select {
-			case ch <- true:
-			default:
-			}
-		}
-		// Wrap connection to track when it closes
-		return &trackedConn{Conn: conn, wg: wg}, nil
+		return originalDial(ctx, network, addr)
 	}
 
 	// Set up rate limiting
@@ -298,14 +253,19 @@ func startSocks5Server() {
 		conf.OutBucket = ratelimit.NewBucketWithRate(float64(*socksOutRateLimit), *socksOutRateLimit)
 	}
 
-	// Set up proxy chaining if configured
+	// Set up proxy chaining if configured: host:port[:user[:password]]
 	if *sockNext != "" {
 		var a *proxy.Auth
 		p := strings.Split(*sockNext, ":")
+		if len(p) < 2 {
+			log.Fatalf("-socks5next %q: expected host:port[:user[:password]]", *sockNext)
+		}
 		if len(p) > 2 {
 			a = new(proxy.Auth)
 			a.User = p[2]
-			a.Password = p[3]
+			if len(p) > 3 {
+				a.Password = strings.Join(p[3:], ":")
+			}
 			*sockNext = strings.Join(p[:2], ":")
 		}
 		dialer, err := proxy.SOCKS5("tcp", *sockNext, a, &net.Dialer{
@@ -322,10 +282,12 @@ func startSocks5Server() {
 	// Set up authentication if configured
 	if *sockAuth != "" {
 		cred := stfsocks5.ParseSocks5Auth(*sockAuth)
-		if len(cred) > 0 {
-			cator := gosocks5.UserPassAuthenticator{Credentials: cred}
-			conf.AuthMethods = []gosocks5.Authenticator{cator}
+		if len(cred) == 0 {
+			// Fail closed: a typo'd or unreadable auth file must not yield an open proxy.
+			log.Fatalf("-socks5auth %q: no credentials could be loaded", *sockAuth)
 		}
+		cator := gosocks5.UserPassAuthenticator{Credentials: cred}
+		conf.AuthMethods = []gosocks5.Authenticator{cator}
 	}
 
 	// Set up finalizer for logging
@@ -352,41 +314,39 @@ func startSocks5Server() {
 
 	// Start accepting connections in a goroutine
 	go func() {
+		var backoff time.Duration
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
-				if stop {
+				if lc.isStopping() || errors.Is(err, net.ErrClosed) {
 					return
 				}
-				log.Printf("Accept error: %v", err)
+				// Back off on persistent errors (e.g. EMFILE) instead of spinning.
+				if backoff == 0 {
+					backoff = 5 * time.Millisecond
+				} else if backoff < time.Second {
+					backoff *= 2
+				}
+				log.Printf("Accept error: %v; retrying in %v", err, backoff)
+				time.Sleep(backoff)
 				continue
 			}
+			backoff = 0
 
-			// Check if we're stopping
-			if stop {
+			// Track connection; refuse if shutting down
+			if !lc.begin() {
 				conn.Close()
 				continue
 			}
-
-			// Keep timer alive
-			if !*notimeout {
-				select {
-				case ch <- true:
-				default:
-				}
-			}
-
-			// Track connection
-			wg.Add(1)
 			go func() {
-				defer wg.Done()
+				defer lc.end()
 				server.ServeConn(conn)
 			}()
 		}
 	}()
 
 	// Wait for shutdown
-	<-shutdownChan
+	<-lc.Done()
 }
 
 func startHTTPTunnel() {
@@ -394,36 +354,17 @@ func startHTTPTunnel() {
 
 	// Wrap the proxy handler to check stop flag
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check if we're stopping
-		if stop {
+		// Track request; refuse if shutting down
+		if !lc.begin() {
 			http.Error(w, "Service Unavailable - Server is shutting down", http.StatusServiceUnavailable)
 			return
 		}
-
-		// Track connection
-		wg.Add(1)
-		defer wg.Done()
-
-		// Keep timer alive if not in notimeout mode
-		if !*notimeout {
-			select {
-			case ch <- true:
-			default:
-			}
-		}
+		defer lc.end()
 
 		proxy.ServeHTTP(w, r)
 	})
 
-	server := &http.Server{
-		Addr:    *fport,
-		Handler: handler,
-	}
-
-	if !*notimeout {
-		server.ReadTimeout = *timeout
-		server.WriteTimeout = *timeout
-	}
+	server := newHTTPServer(handler)
 
 	// Start server in a goroutine so we can handle shutdown
 	go func() {
@@ -433,11 +374,23 @@ func startHTTPTunnel() {
 	}()
 
 	// Wait for shutdown signal
-	<-shutdownChan
+	<-lc.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		log.Printf("HTTP tunnel shutdown error: %v", err)
+	}
+}
+
+// newHTTPServer builds an http.Server with header/idle timeouts only. Absolute
+// Read/WriteTimeouts are deliberately not set: they would cut off any download,
+// upload or CONNECT tunnel that legitimately runs longer than the limit.
+func newHTTPServer(h http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              *fport,
+		Handler:           h,
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 }
 
@@ -503,11 +456,15 @@ func generateSelfSignedCert(certPath, keyPath string) error {
 	}
 
 	// Save private key
-	keyOut, err := os.Create(keyPath)
+	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create key file: %v", err)
 	}
 	defer keyOut.Close()
+	// O_CREATE's mode does not apply to an existing file; tighten it explicitly.
+	if err := keyOut.Chmod(0600); err != nil {
+		return fmt.Errorf("failed to chmod key file: %v", err)
+	}
 
 	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
@@ -589,23 +546,13 @@ func startHTTPServer() {
 
 	// Main handler that routes different request types
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check if we're stopping
-		if stop {
+		// Track request; refuse if shutting down
+		if !lc.begin() {
 			http.Error(w, "Service Unavailable - Server is shutting down", http.StatusServiceUnavailable)
 			return
 		}
+		defer lc.end()
 
-		// Track connection
-		wg.Add(1)
-		defer wg.Done()
-
-		// Keep timer alive if not in notimeout mode
-		if !*notimeout {
-			select {
-			case ch <- true:
-			default:
-			}
-		}
 		if *rt != -1 {
 			// Debug mode: return specific status code
 			w.WriteHeader(*rt)
@@ -635,6 +582,13 @@ func startHTTPServer() {
 		} else if r.Method == "POST" || r.Method == "PUT" {
 			// File upload
 			uploadHandler(w, r)
+		} else {
+			allow := "GET, HEAD, POST, PUT"
+			if *uploadonly {
+				allow = "POST, PUT"
+			}
+			w.Header().Set("Allow", allow)
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
@@ -661,15 +615,7 @@ func startHTTPServer() {
 	// Add logging middleware
 	h = middleware.LogHandlerWithColors(h, *usecolor)
 
-	server := &http.Server{
-		Addr:    *fport,
-		Handler: h,
-	}
-
-	if !*notimeout {
-		server.ReadTimeout = *timeout
-		server.WriteTimeout = *timeout
-	}
+	server := newHTTPServer(h)
 
 	// Determine server type and configure TLS if needed
 	var protocol string = "http"
@@ -715,7 +661,7 @@ func startHTTPServer() {
 	}()
 
 	// Wait for shutdown signal
-	<-shutdownChan
+	<-lc.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
@@ -723,25 +669,23 @@ func startHTTPServer() {
 	}
 }
 
+// parseRedirect splits "-3xx" into a status code and URL template.
+// Accepted forms: "URL", "301 URL", "301URL". Default code is 302.
+func parseRedirect(s string) (int, string) {
+	if len(s) >= 3 {
+		if c, err := strconv.Atoi(s[:3]); err == nil && c >= 300 && c < 400 {
+			return c, strings.TrimLeft(s[3:], " ")
+		}
+	}
+	return http.StatusFound, s
+}
+
 // handleRedirect handles HTTP redirects based on template
 func handleRedirect(w http.ResponseWriter, r *http.Request, redirectTemplate string) {
-	code := 302
-	var urlTemplate string
-
-	// Check if code is specified
-	if len(redirectTemplate) >= 3 {
-		if codeStr := redirectTemplate[:3]; strings.ContainsRune("0123456789", rune(codeStr[0])) {
-			if c, err := strconv.Atoi(codeStr); err == nil && c >= 300 && c < 400 {
-				code = c
-				if len(redirectTemplate) > 4 {
-					urlTemplate = redirectTemplate[4:]
-				}
-			} else {
-				urlTemplate = redirectTemplate
-			}
-		} else {
-			urlTemplate = redirectTemplate
-		}
+	code, urlTemplate := parseRedirect(redirectTemplate)
+	if urlTemplate == "" {
+		http.Error(w, "redirect target is empty", http.StatusInternalServerError)
+		return
 	}
 
 	// Parse and execute template
@@ -762,38 +706,86 @@ func handleRedirect(w http.ResponseWriter, r *http.Request, redirectTemplate str
 	http.Redirect(w, r, buf.String(), code)
 }
 
-// uploadHandler handles file uploads
+var errUploadTarget = errors.New("invalid upload target")
+
+// uploadTarget maps a request path to a file under root. The path is cleaned
+// as an absolute URL path first, so ".." can never climb above root, and the
+// resolved parent directory (after MkdirAll) must not escape root via symlinks.
+func uploadTarget(root, urlPath string) (string, error) {
+	if strings.HasSuffix(urlPath, "/") && urlPath != "/" {
+		return "", fmt.Errorf("%w: path must name a file, not a directory", errUploadTarget)
+	}
+	rel := strings.TrimPrefix(path.Clean("/"+urlPath), "/")
+	if rel == "" {
+		rel = "index.html" // default file name for root path
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	if r, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = r
+	}
+	p := filepath.Join(absRoot, filepath.FromSlash(rel))
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create directory: %v", err)
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	if realDir != absRoot && !strings.HasPrefix(realDir, absRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf("%w: escapes served directory", errUploadTarget)
+	}
+	return filepath.Join(realDir, filepath.Base(p)), nil
+}
+
+// uploadHandler handles file uploads. The body is written to a temp file in
+// the target directory and renamed into place only after a successful write
+// and close, so a failed or aborted upload never leaves a truncated file.
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
-	// Clean the URL path to avoid issues with leading slashes
-	urlPath := strings.TrimPrefix(r.URL.Path, "/")
-	if urlPath == "" {
-		urlPath = "index.html" // default file name for root path
-	}
-	p := filepath.Join(*fdir, urlPath)
-	d, _ := filepath.Split(p)
-
-	// Ensure directory exists (only if there's a directory component)
-	if d != "" && d != "." {
-		if err := os.MkdirAll(d, 0755); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to create directory: %v", err), http.StatusInternalServerError)
-			return
+	p, err := uploadTarget(*fdir, r.URL.Path)
+	if err != nil {
+		code := http.StatusInternalServerError
+		if errors.Is(err, errUploadTarget) {
+			code = http.StatusBadRequest
 		}
+		http.Error(w, err.Error(), code)
+		return
 	}
 
-	// Create the file
-	out, err := os.Create(p)
+	tmp, err := os.CreateTemp(filepath.Dir(p), "."+filepath.Base(p)+".upload-*")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Unable to create file: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer out.Close()
+	tmpName := tmp.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			tmp.Close()
+			os.Remove(tmpName)
+		}
+	}()
 
-	// Copy request body to file
-	_, err = io.Copy(out, r.Body)
-	if err != nil {
+	if _, err := io.Copy(tmp, r.Body); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
 		return
 	}
+	if err := tmp.Chmod(0644); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := os.Rename(tmpName, p); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
+		return
+	}
+	ok = true
 
 	fmt.Fprintf(w, "File uploaded successfully: %s\n", p)
 }

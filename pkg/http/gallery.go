@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/bmp"
+	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
 

@@ -53,6 +53,9 @@ func TestDirOpen(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "invalid path with separator" && filepath.Separator == '/' {
+				t.Skip("separator check only applies where the OS separator is not '/'")
+			}
 			f, err := dir.Open(tt.filename)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Dir.Open() error = %v, wantErr %v", err, tt.wantErr)
@@ -138,13 +141,23 @@ func TestFileServer(t *testing.T) {
 		{
 			name:       "path traversal attempt",
 			path:       "/../../../etc/passwd",
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusNotFound, // cleaned into the root, never escapes it
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, err := http.Get(server.URL + tt.path)
+			// Don't follow redirects, and send the path verbatim (Go's client
+			// would otherwise clean "/../" before it reaches the server).
+			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}}
+			req, err := http.NewRequest("GET", server.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.URL.Opaque = tt.path
+			resp, err := client.Do(req)
 			if err != nil {
 				t.Fatalf("Failed to make request: %v", err)
 			}
@@ -278,12 +291,12 @@ func TestCheckPreconditions(t *testing.T) {
 		},
 		{
 			name:     "If-Modified-Since with old date",
-			headers:  map[string]string{"If-Modified-Since": modTime.Add(-time.Hour).Format(http.TimeFormat)},
+			headers:  map[string]string{"If-Modified-Since": modTime.Add(-time.Hour).UTC().Format(http.TimeFormat)},
 			wantDone: false,
 		},
 		{
 			name:       "If-Modified-Since with recent date",
-			headers:    map[string]string{"If-Modified-Since": modTime.Add(time.Hour).Format(http.TimeFormat)},
+			headers:    map[string]string{"If-Modified-Since": modTime.Add(time.Hour).UTC().Format(http.TimeFormat)},
 			wantDone:   true,
 			wantStatus: http.StatusNotModified,
 		},

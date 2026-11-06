@@ -33,12 +33,49 @@ var (
 		"wmv":  "file-video-o",
 		"avi":  "file-video-o",
 		"flv":  "file-video-o",
+		"mkv":  "file-video-o",
+		"webm": "file-video-o",
+		"m4v":  "file-video-o",
 		"go":   "file-code-o",
+		"py":   "file-code-o",
+		"js":   "file-code-o",
+		"ts":   "file-code-o",
+		"sh":   "file-code-o",
+		"c":    "file-code-o",
+		"h":    "file-code-o",
+		"rs":   "file-code-o",
+		"java": "file-code-o",
+		"html": "file-code-o",
+		"css":  "file-code-o",
+		"json": "file-code-o",
+		"yaml": "file-code-o",
+		"yml":  "file-code-o",
 		"mp3":  "file-audio-o",
+		"flac": "file-audio-o",
+		"wav":  "file-audio-o",
+		"m4a":  "file-audio-o",
+		"ogg":  "file-audio-o",
 		"jpeg": "file-image-o",
 		"jpg":  "file-image-o",
 		"png":  "file-image-o",
 		"gif":  "file-image-o",
+		"webp": "file-image-o",
+		"bmp":  "file-image-o",
+		"svg":  "file-image-o",
+		"heic": "file-image-o",
+		"avif": "file-image-o",
+		"txt":  "file-text-o",
+		"md":   "file-text-o",
+		"log":  "file-text-o",
+		"csv":  "file-text-o",
+		"pdf":  "file-pdf-o",
+		"zip":  "file-archive-o",
+		"gz":   "file-archive-o",
+		"tgz":  "file-archive-o",
+		"tar":  "file-archive-o",
+		"xz":   "file-archive-o",
+		"7z":   "file-archive-o",
+		"rar":  "file-archive-o",
 	}
 )
 
@@ -152,6 +189,9 @@ func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 	v := r.URL.Query()
 	orderBy := v.Get("by")
 	desc := v.Get("desc")
+	if desc != "0" {
+		desc = "1" // default listing is descending; normalise so the toggle flips on first click
+	}
 	key := v.Get("key")
 	var list []os.FileInfo
 	if len(key) != 0 {
@@ -238,7 +278,8 @@ func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 		} else {
 			f.Icon = getIcon(f.Name)
 		}
-		f.Name = htmlReplacer.Replace(f.Name)
+		// html/template escapes Name/Url itself; pre-escaping here double-escaped
+		// names like "a&b" and broke their links.
 		u := url.URL{Path: f.Name}
 		f.Url = u.String()
 		f.Size = humanize.IBytes(uint64(d.Size()))
@@ -253,6 +294,7 @@ func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 	tmpl, err := template.New("page").Parse(staticTemplate)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	err = tmpl.Execute(w, page)
 	if err != nil {
@@ -263,7 +305,7 @@ func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 func getIcon(file string) template.HTML {
 	p := strings.Split(file, ".")
 	if len(p) > 1 {
-		ext := p[len(p)-1:][0]
+		ext := strings.ToLower(p[len(p)-1])
 		if v, ok := extIcon[ext]; ok {
 			return template.HTML(fmt.Sprintf(`<i class="fa fa-%s" aria-hidden="true"></i>`, v))
 		}
