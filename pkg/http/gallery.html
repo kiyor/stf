@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>Gallery</title>
+<style>
+:root{
+  --bg:#1e1f22;--panel:#2b2d31;--panel2:#33363c;--line:#16171a;--fg:#d8dadf;--dim:#8b8f98;
+  --accent:#3d8bfd;--sel:#2f5d9e;--hover:#3a3d44;--tile:180px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+  font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft Yahei","PingFang SC",sans-serif;overflow:hidden}
+button,select,input{font:inherit;color:var(--fg);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:4px 8px}
+button{cursor:pointer}
+button:hover,select:hover{background:var(--hover)}
+button.on{background:var(--sel);border-color:var(--accent)}
+#app{display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:220px 1fr;height:100%}
+#toolbar{grid-column:1/3;display:flex;gap:6px;align-items:center;padding:6px 8px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+#crumbs{display:flex;align-items:center;gap:2px;min-width:0;overflow:hidden;flex:1 1 200px;white-space:nowrap}
+#crumbs a{color:var(--fg);text-decoration:none;padding:2px 5px;border-radius:3px}
+#crumbs a:hover{background:var(--hover)}
+#crumbs span{color:var(--dim)}
+#toolbar .grp{display:flex;gap:4px;align-items:center}
+#toolbar label{color:var(--dim)}
+#filter{width:140px}
+#side{background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:6px 0}
+#side h4{margin:6px 12px;color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+#side a{display:flex;gap:6px;align-items:center;padding:4px 12px;color:var(--fg);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#side a:hover{background:var(--hover)}
+#side .empty{padding:4px 12px;color:var(--dim)}
+#grid{overflow:auto;padding:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--tile),1fr));gap:8px;align-content:start;outline:none}
+.tile{display:flex;flex-direction:column;border:1px solid transparent;border-radius:4px;padding:6px;cursor:default;user-select:none;-webkit-user-select:none}
+.tile:hover{background:var(--hover)}
+.tile.sel{background:var(--sel);border-color:var(--accent)}
+.tile .ph{aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;background:#17181b;border-radius:3px;overflow:hidden}
+.tile img{max-width:100%;max-height:100%;object-fit:contain;display:block}
+.tile .nm{margin-top:5px;font-size:12px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .mt{font-size:11px;color:var(--dim);text-align:center}
+#status{grid-column:1/3;display:flex;gap:16px;padding:4px 10px;background:var(--panel);border-top:1px solid var(--line);color:var(--dim);white-space:nowrap;overflow:hidden}
+#status b{color:var(--fg);font-weight:500}
+#msg{padding:40px;color:var(--dim);grid-column:1/-1;text-align:center}
+.ico{width:16px;height:16px;flex:none;fill:currentColor}
+
+/* viewer */
+#viewer{position:fixed;inset:0;background:#000;display:none;z-index:10;grid-template-rows:auto 1fr auto}
+#viewer.open{display:grid}
+#vbar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:rgba(30,31,34,.92);border-bottom:1px solid var(--line);flex-wrap:wrap}
+#vbar .title{flex:1 1 160px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#vbar .title small{color:var(--dim);margin-left:8px}
+#stage{position:relative;overflow:hidden;cursor:grab;touch-action:none}
+#stage.drag{cursor:grabbing}
+#stage img{position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;-webkit-user-drag:none;image-rendering:auto;max-width:none}
+#stage .nav{position:absolute;top:50%;transform:translateY(-50%);width:48px;height:96px;border:0;background:rgba(0,0,0,.25);font-size:28px;opacity:0;transition:opacity .15s}
+#stage:hover .nav{opacity:.8}
+#prev{left:0;border-radius:0 6px 6px 0}#next{right:0;border-radius:6px 0 0 6px}
+#info{position:absolute;right:10px;top:10px;background:rgba(30,31,34,.9);border:1px solid var(--line);border-radius:6px;padding:10px 12px;min-width:220px;display:none}
+#info.open{display:block}
+#info table{border-collapse:collapse}
+#info td{padding:2px 6px;vertical-align:top}
+#info td:first-child{color:var(--dim)}
+#loading{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:var(--dim);display:none}
+#strip{display:flex;gap:4px;overflow-x:auto;padding:6px;background:rgba(30,31,34,.92);border-top:1px solid var(--line);scrollbar-width:thin}
+#strip img{height:64px;width:64px;object-fit:cover;border:2px solid transparent;border-radius:3px;flex:none;cursor:pointer;opacity:.6;background:#17181b}
+#strip img.cur{border-color:var(--accent);opacity:1}
+#strip img:hover{opacity:1}
+#viewer.nostrip #strip{display:none}
+#help{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:20;align-items:center;justify-content:center}
+#help.open{display:flex}
+#help div{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 20px;max-width:520px}
+#help kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:0 5px;font-size:12px}
+#help td{padding:2px 8px}
+@media (max-width:700px){
+  #app{grid-template-columns:1fr}
+  #side{display:none}
+  #toolbar,#status{grid-column:1}
+  :root{--tile:110px}
+  #filter{width:90px}
+  #toolbar .wide{display:none}
+  #stage .nav{opacity:.5}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <button id="up" title="Parent folder (Backspace)">&#8593;</button>
+    <div id="crumbs"></div>
+    <div class="grp"><label for="sort">Sort</label>
+      <select id="sort"><option value="name">Name</option><option value="mtime">Date</option><option value="size">Size</option></select>
+      <button id="dir" title="Reverse order">&#8595;</button></div>
+    <div class="grp wide"><label for="zoom">Size</label><input id="zoom" type="range" min="90" max="360" step="10" value="180"></div>
+    <input id="filter" type="search" placeholder="Filter…">
+    <button id="slide" title="Slideshow (S)">&#9654; Slideshow</button>
+    <a id="listview" href="./" title="Plain file list"><button>List</button></a>
+    <button id="helpbtn" title="Keyboard shortcuts (?)">?</button>
+  </div>
+  <nav id="side"><h4>Folders</h4><div id="folders"></div></nav>
+  <main id="grid" tabindex="0"></main>
+  <div id="status"><span id="count"></span><span id="selinfo"></span></div>
+</div>
+
+<div id="viewer">
+  <div id="vbar">
+    <button id="vclose" title="Back to browser (Esc)">&#10005;</button>
+    <div class="title"><span id="vname"></span><small id="vpos"></small></div>
+    <button id="vfit" title="Fit to window (0)">Fit</button>
+    <button id="v100" title="Actual size (1)">1:1</button>
+    <button id="vzo" title="Zoom out (-)">&minus;</button>
+    <span id="vzoom" style="min-width:48px;text-align:center"></span>
+    <button id="vzi" title="Zoom in (+)">+</button>
+    <button id="vrot" title="Rotate (R)">&#8635;</button>
+    <button id="vslide" title="Slideshow (S)">&#9654;</button>
+    <button id="vinfo" title="Properties (I)">i</button>
+    <button id="vstrip" title="Filmstrip (T)">&#9638;</button>
+    <button id="vfull" title="Full screen (F)">&#9974;</button>
+    <a id="vdl" download title="Download original"><button>&#8681;</button></a>
+  </div>
+  <div id="stage">
+    <img id="vimg" alt="">
+    <div id="loading">Loading…</div>
+    <button class="nav" id="prev" title="Previous">&#8249;</button>
+    <button class="nav" id="next" title="Next">&#8250;</button>
+    <div id="info"></div>
+  </div>
+  <div id="strip"></div>
+</div>
+
+<div id="help"><div>
+  <h3 style="margin-top:0">Keyboard</h3>
+  <table>
+    <tr><td><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></td><td>Move selection / previous, next</td></tr>
+    <tr><td><kbd>Enter</kbd> / double-click</td><td>Open viewer</td></tr>
+    <tr><td><kbd>Space</kbd> <kbd>PgDn</kbd> / <kbd>PgUp</kbd></td><td>Next / previous image</td></tr>
+    <tr><td><kbd>Home</kbd> <kbd>End</kbd></td><td>First / last</td></tr>
+    <tr><td><kbd>Backspace</kbd></td><td>Parent folder (browser)</td></tr>
+    <tr><td><kbd>+</kbd> <kbd>-</kbd> / wheel</td><td>Zoom</td></tr>
+    <tr><td><kbd>0</kbd> <kbd>1</kbd> / double-click</td><td>Fit / actual size</td></tr>
+    <tr><td><kbd>R</kbd> <kbd>L</kbd></td><td>Rotate right / left</td></tr>
+    <tr><td><kbd>I</kbd> <kbd>T</kbd> <kbd>F</kbd></td><td>Properties / filmstrip / full screen</td></tr>
+    <tr><td><kbd>S</kbd></td><td>Slideshow</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Close viewer</td></tr>
+  </table>
+  <p style="color:var(--dim);margin-bottom:0">Touch: swipe to change image, double-tap to zoom, drag to pan.</p>
+</div></div>
+
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const enc = s => encodeURIComponent(s);
+const folderSVG = '<svg class="ico" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z"/></svg>';
+const LS = window.localStorage;
+const st = {
+  data: null, items: [], sel: -1, cur: -1,
+  sort: LS.getItem('stfg.sort') || 'name',
+  desc: LS.getItem('stfg.desc') === '1',
+  tile: +(LS.getItem('stfg.tile') || 180),
+  strip: LS.getItem('stfg.strip') !== '0',
+  filter: '', slideTimer: null,
+  z: 1, fit: true, rot: 0, tx: 0, ty: 0,
+};
+
+function fmtSize(n) {
+  const u = ['B','KB','MB','GB','TB']; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + ' ' + u[i];
+}
+function fmtDate(t) {
+  const d = new Date(t * 1000), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+const thumbPx = () => (st.tile * (window.devicePixelRatio || 1) > 300 ? 512 : 256);
+const thumbURL = (it, px) => enc(it.name) + (it.thumb ? '?thumb=' + (px || thumbPx()) + '&v=' + it.mtime : '');
+const coll = new Intl.Collator(undefined, {numeric: true, sensitivity: 'base'});
+
+// ---------- browser ----------
+async function load() {
+  try {
+    const r = await fetch('?gallery=json', {cache: 'no-store'});
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    st.data = await r.json();
+  } catch (e) {
+    $('grid').innerHTML = '<div id="msg">Failed to load folder: ' + e.message + '</div>';
+    return;
+  }
+  document.title = decodeURIComponent(st.data.path) + ' — Gallery';
+  renderCrumbs(); renderFolders(); applyItems();
+  const h = viewHash();
+  if (h != null) { const i = st.items.findIndex(x => x.name === h); if (i >= 0) openViewer(i, true); }
+}
+
+function renderCrumbs() {
+  const parts = st.data.path.split('/').filter(Boolean);
+  let html = '<a href="/?gallery">/</a>', acc = '/';
+  parts.forEach((p, i) => {
+    acc += p + '/';
+    html += (i ? '<span>/</span>' : '') + `<a href="${acc}?gallery">${esc(decodeURIComponent(p))}</a>`;
+  });
+  $('crumbs').innerHTML = html;
+  $('up').disabled = parts.length === 0;
+}
+function esc(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function renderFolders() {
+  const ds = st.data.dirs;
+  let html = st.data.path !== '/' ? `<a href="../?gallery">${folderSVG}..</a>` : '';
+  html += ds.map(d => `<a href="${enc(d.name)}/?gallery" title="${esc(d.name)}">${folderSVG}${esc(d.name)}</a>`).join('');
+  if (!ds.length) html += '<div class="empty">No subfolders</div>';
+  $('folders').innerHTML = html;
+}
+
+function applyItems() {
+  const keep = st.items[st.sel] && st.items[st.sel].name;
+  const f = st.filter.toLowerCase();
+  let it = st.data.images.filter(x => !f || x.name.toLowerCase().includes(f));
+  const k = st.sort;
+  it.sort((a, b) => k === 'name' ? coll.compare(a.name, b.name) : (a[k] - b[k]) || coll.compare(a.name, b.name));
+  if (st.desc) it.reverse();
+  st.items = it;
+  st.sel = keep ? Math.max(0, it.findIndex(x => x.name === keep)) : (it.length ? 0 : -1);
+  renderGrid();
+}
+
+function renderGrid() {
+  const g = $('grid');
+  document.documentElement.style.setProperty('--tile', st.tile + 'px');
+  if (!st.items.length) {
+    g.innerHTML = '<div id="msg">' + (st.data.images.length ? 'No images match the filter.' : 'No images in this folder.' + (st.data.dirs.length ? ' Pick a subfolder on the left.' : '')) + '</div>';
+  } else {
+    g.innerHTML = st.items.map((x, i) =>
+      `<div class="tile${i === st.sel ? ' sel' : ''}" data-i="${i}" title="${esc(x.name)}">` +
+      `<div class="ph"><img loading="lazy" decoding="async" src="${thumbURL(x)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'✕ unreadable',style:'color:#8b8f98'}))"></div>` +
+      `<div class="nm">${esc(x.name)}</div><div class="mt">${fmtSize(x.size)}</div></div>`).join('');
+  }
+  updateStatus();
+}
+
+function updateStatus() {
+  const tot = st.items.reduce((s, x) => s + x.size, 0);
+  $('count').innerHTML = `<b>${st.items.length}</b> image${st.items.length === 1 ? '' : 's'} (${fmtSize(tot)})` +
+    (st.data.dirs.length ? ` · <b>${st.data.dirs.length}</b> folders` : '') +
+    (st.data.others ? ` · ${st.data.others} other files` : '');
+  const x = st.items[st.sel];
+  $('selinfo').innerHTML = x ? `Selected: <b>${esc(x.name)}</b> · ${fmtSize(x.size)} · ${fmtDate(x.mtime)}` : '';
+  $('sort').value = st.sort;
+  $('dir').innerHTML = st.desc ? '&#8593;' : '&#8595;';
+  $('zoom').value = st.tile;
+}
+
+function select(i, scroll = true) {
+  if (!st.items.length) return;
+  i = Math.max(0, Math.min(st.items.length - 1, i));
+  const g = $('grid'), old = g.querySelector('.tile.sel');
+  if (old) old.classList.remove('sel');
+  st.sel = i;
+  const t = g.querySelector(`.tile[data-i="${i}"]`);
+  if (t) { t.classList.add('sel'); if (scroll) t.scrollIntoView({block: 'nearest'}); }
+  updateStatus();
+}
+function gridCols() {
+  const ts = $('grid').querySelectorAll('.tile');
+  if (ts.length < 2) return 1;
+  const top = ts[0].offsetTop; let n = 0;
+  for (const t of ts) { if (t.offsetTop !== top) break; n++; }
+  return n || 1;
+}
+
+$('grid').addEventListener('click', e => { const t = e.target.closest('.tile'); if (t) select(+t.dataset.i, false); });
+$('grid').addEventListener('dblclick', e => { const t = e.target.closest('.tile'); if (t) openViewer(+t.dataset.i); });
+// single tap opens on touch devices
+$('grid').addEventListener('touchend', e => {
+  const t = e.target.closest('.tile'); if (!t || st._moved) return;
+  e.preventDefault(); select(+t.dataset.i, false); openViewer(+t.dataset.i);
+});
+$('grid').addEventListener('touchstart', () => { st._moved = false; }, {passive: true});
+$('grid').addEventListener('touchmove', () => { st._moved = true; }, {passive: true});
+$('up').onclick = () => { location.href = '../?gallery'; };
+$('sort').onchange = e => { st.sort = e.target.value; LS.setItem('stfg.sort', st.sort); applyItems(); };
+$('dir').onclick = () => { st.desc = !st.desc; LS.setItem('stfg.desc', st.desc ? '1' : '0'); applyItems(); };
+$('zoom').oninput = e => { st.tile = +e.target.value; LS.setItem('stfg.tile', st.tile); document.documentElement.style.setProperty('--tile', st.tile + 'px'); };
+$('zoom').onchange = () => renderGrid();
+$('filter').oninput = e => { st.filter = e.target.value; applyItems(); };
+$('slide').onclick = () => { if (st.items.length) { openViewer(Math.max(0, st.sel)); toggleSlide(true); } };
+$('helpbtn').onclick = () => $('help').classList.add('open');
+$('help').onclick = () => $('help').classList.remove('open');
+
+// ---------- viewer ----------
+const V = $('viewer'), IMG = $('vimg'), STAGE = $('stage');
+let loadToken = 0;
+
+function viewHash() {
+  const m = location.hash.match(/^#view=(.*)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function openViewer(i, fromHash) {
+  if (!st.items.length) return;
+  V.classList.add('open');
+  V.classList.toggle('nostrip', !st.strip);
+  $('vstrip').classList.toggle('on', st.strip);
+  buildStrip();
+  show(i);
+  if (!fromHash) history.pushState({v: 1}, '', '#view=' + enc(st.items[i].name));
+}
+function closeViewer(fromPop) {
+  if (!V.classList.contains('open')) return;
+  toggleSlide(false);
+  if (document.fullscreenElement) document.exitFullscreen();
+  V.classList.remove('open');
+  IMG.removeAttribute('src');
+  select(st.cur);
+  $('grid').focus();
+  if (!fromPop) {
+    if (history.state && history.state.v) history.back();
+    else history.replaceState(null, '', location.pathname + location.search);
+  }
+}
+window.addEventListener('popstate', () => {
+  const h = viewHash();
+  if (h == null) closeViewer(true);
+  else { const i = st.items.findIndex(x => x.name === h); if (i >= 0) { if (!V.classList.contains('open')) openViewer(i, true); else show(i, true); } }
+});
+
+function buildStrip() {
+  $('strip').innerHTML = st.items.map((x, i) => `<img loading="lazy" data-i="${i}" src="${thumbURL(x, 256)}" title="${esc(x.name)}" alt="" onerror="this.removeAttribute('src')">`).join('');
+}
+$('strip').onclick = e => { if (e.target.dataset.i) show(+e.target.dataset.i); };
+
+function show(i, noHist) {
+  const n = st.items.length; if (!n) return;
+  i = ((i % n) + n) % n;
+  st.cur = i; st.sel = i;
+  const x = st.items[i], src = enc(x.name);
+  const tok = ++loadToken;
+  st.rot = 0; st.fit = true;
+  $('vname').textContent = x.name;
+  $('vpos').textContent = `${i + 1} / ${n}`;
+  $('vdl').href = src;
+  $('loading').style.display = 'block';
+  // show the cached thumbnail immediately, swap in the original when ready
+  // until the original arrives its size is unknown: size the placeholder as a
+  // large image of the thumbnail's aspect so "fit" fills the stage
+  IMG.dataset.full = ''; IMG.dataset.w = ''; IMG.dataset.h = '';
+  IMG.style.visibility = 'hidden';
+  if (x.thumb) {
+    IMG.onload = () => {
+      if (tok !== loadToken || IMG.dataset.full) return;
+      IMG.dataset.w = IMG.naturalWidth * 16; IMG.dataset.h = IMG.naturalHeight * 16;
+      IMG.style.visibility = ''; fitImage();
+    };
+    IMG.src = thumbURL(x, 256);
+  }
+  const full = new Image();
+  full.onload = () => {
+    if (tok !== loadToken) return;
+    IMG.onload = null;
+    IMG.src = src; IMG.dataset.full = '1';
+    IMG.dataset.w = full.naturalWidth; IMG.dataset.h = full.naturalHeight;
+    IMG.style.visibility = '';
+    $('loading').style.display = 'none';
+    fitImage(); renderInfo();
+  };
+  full.onerror = () => { if (tok === loadToken) { $('loading').textContent = 'Cannot display this image'; } };
+  $('loading').textContent = 'Loading…';
+  full.src = src;
+  renderInfo();
+  // highlight filmstrip
+  const s = $('strip'), old = s.querySelector('.cur'); if (old) old.classList.remove('cur');
+  const c = s.querySelector(`img[data-i="${i}"]`); if (c) { c.classList.add('cur'); c.scrollIntoView({inline: 'center', block: 'nearest'}); }
+  // preload neighbours
+  [i + 1, i - 1].forEach(j => { const y = st.items[((j % n) + n) % n]; if (y) new Image().src = enc(y.name); });
+  if (!noHist && V.classList.contains('open') && viewHash() !== null) history.replaceState(history.state, '', '#view=' + enc(x.name));
+  if (st.slideTimer) restartSlide();
+}
+
+function natural() {
+  let w = +IMG.dataset.w || IMG.naturalWidth || 1, h = +IMG.dataset.h || IMG.naturalHeight || 1;
+  return st.rot % 180 ? [h, w] : [w, h];
+}
+function fitScale() {
+  const [w, h] = natural(), r = STAGE.getBoundingClientRect();
+  return Math.min(1, r.width / w, r.height / h);
+}
+function fitImage() { st.fit = true; st.z = fitScale(); center(); apply(); }
+function center() {
+  const [w, h] = natural(), r = STAGE.getBoundingClientRect();
+  st.tx = (r.width - w * st.z) / 2; st.ty = (r.height - h * st.z) / 2;
+}
+function apply() {
+  // the <img> may currently hold the thumbnail; scale it to the original's dimensions
+  const w0 = +IMG.dataset.w || IMG.naturalWidth, h0 = +IMG.dataset.h || IMG.naturalHeight;
+  IMG.style.width = w0 + 'px'; IMG.style.height = h0 + 'px';
+  const [w, h] = natural();
+  // rotate around the image's own box, then place the rotated box at (tx,ty)
+  let ox = 0, oy = 0;
+  if (st.rot === 90) ox = h0; else if (st.rot === 180) { ox = w0; oy = h0; } else if (st.rot === 270) oy = w0;
+  IMG.style.transform = `translate(${st.tx}px,${st.ty}px) scale(${st.z}) translate(${ox}px,${oy}px) rotate(${st.rot}deg)`;
+  $('vzoom').textContent = Math.round(st.z * 100) + '%';
+  $('vfit').classList.toggle('on', st.fit);
+  void w; void h;
+}
+function zoomAt(f, cx, cy) {
+  const r = STAGE.getBoundingClientRect();
+  if (cx == null) { cx = r.width / 2; cy = r.height / 2; }
+  const nz = Math.max(0.02, Math.min(32, st.z * f));
+  st.tx = cx - (cx - st.tx) * nz / st.z; st.ty = cy - (cy - st.ty) * nz / st.z;
+  st.z = nz; st.fit = false; apply();
+}
+function actual(cx, cy) { zoomAt(1 / st.z, cx, cy); if (cx == null) { center(); apply(); } }
+function rotate(d) { st.rot = (st.rot + d + 360) % 360; fitImage(); renderInfo(); }
+
+function renderInfo() {
+  const x = st.items[st.cur]; if (!x) return;
+  const w = IMG.dataset.w, h = IMG.dataset.h;
+  const rows = [['File', esc(x.name)], ['Dimensions', w ? `${w} × ${h}` + (w && h ? ` (${(w * h / 1e6).toFixed(1)} MP)` : '') : '…'],
+    ['Size', `${fmtSize(x.size)} (${x.size.toLocaleString()} bytes)`], ['Modified', fmtDate(x.mtime)],
+    ['Type', x.name.split('.').pop().toUpperCase()], ['Position', `${st.cur + 1} of ${st.items.length}`], ['Folder', esc(decodeURIComponent(st.data.path))]];
+  $('info').innerHTML = '<table>' + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('') + '</table>';
+}
+
+function toggleSlide(on) {
+  if (on === undefined) on = !st.slideTimer;
+  clearInterval(st.slideTimer); st.slideTimer = null;
+  if (on) st.slideTimer = setInterval(() => show(st.cur + 1), 3500);
+  $('vslide').classList.toggle('on', !!on);
+  $('vslide').innerHTML = on ? '&#10074;&#10074;' : '&#9654;';
+}
+function restartSlide() { toggleSlide(true); }
+function toggleFull() { document.fullscreenElement ? document.exitFullscreen() : V.requestFullscreen && V.requestFullscreen(); }
+
+$('vclose').onclick = () => closeViewer();
+$('vfit').onclick = fitImage;
+$('v100').onclick = () => actual();
+$('vzi').onclick = () => zoomAt(1.25);
+$('vzo').onclick = () => zoomAt(0.8);
+$('vrot').onclick = () => rotate(90);
+$('vslide').onclick = () => toggleSlide();
+$('vinfo').onclick = () => { $('info').classList.toggle('open'); $('vinfo').classList.toggle('on'); };
+$('vstrip').onclick = () => { st.strip = !st.strip; LS.setItem('stfg.strip', st.strip ? '1' : '0'); V.classList.toggle('nostrip', !st.strip); $('vstrip').classList.toggle('on', st.strip); setTimeout(() => st.fit && fitImage(), 0); };
+$('vfull').onclick = toggleFull;
+$('prev').onclick = e => { e.stopPropagation(); show(st.cur - 1); };
+$('next').onclick = e => { e.stopPropagation(); show(st.cur + 1); };
+window.addEventListener('resize', () => { if (V.classList.contains('open') && st.fit) fitImage(); });
+document.addEventListener('fullscreenchange', () => setTimeout(() => st.fit && fitImage(), 50));
+
+STAGE.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = STAGE.getBoundingClientRect();
+  zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - r.left, e.clientY - r.top);
+}, {passive: false});
+
+// pointer: drag to pan, pinch to zoom, swipe to navigate, double click/tap to toggle 1:1
+const ptrs = new Map(); let drag = null, lastTap = 0, pinch = null;
+STAGE.addEventListener('pointerdown', e => {
+  if (e.target.closest('.nav,#info')) return;
+  try { STAGE.setPointerCapture(e.pointerId); } catch (_) { /* pointer already gone */ }
+  ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    pinch = {d: Math.hypot(a.x - b.x, a.y - b.y), z: st.z}; drag = null; return;
+  }
+  drag = {x: e.clientX, y: e.clientY, tx: st.tx, ty: st.ty, t: Date.now(), moved: false};
+  STAGE.classList.add('drag');
+});
+STAGE.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if (pinch && ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()], r = STAGE.getBoundingClientRect();
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    zoomAt(pinch.z * d / pinch.d / st.z, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+    return;
+  }
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+  if (!st.fit) { st.tx = drag.tx + dx; st.ty = drag.ty + dy; apply(); }
+});
+function endPtr(e) {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.delete(e.pointerId);
+  STAGE.classList.remove('drag');
+  if (pinch) { if (ptrs.size < 2) pinch = null; drag = null; return; }
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y, dt = Date.now() - drag.t;
+  if (st.fit && drag.moved && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) && dt < 800) show(st.cur + (dx < 0 ? 1 : -1));
+  else if (!drag.moved) {
+    const now = Date.now(), r = STAGE.getBoundingClientRect();
+    if (now - lastTap < 300) { st.fit ? actual(e.clientX - r.left, e.clientY - r.top) : fitImage(); lastTap = 0; }
+    else lastTap = now;
+  }
+  drag = null;
+}
+STAGE.addEventListener('pointerup', endPtr);
+STAGE.addEventListener('pointercancel', endPtr);
+
+// ---------- keyboard ----------
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' && e.target.type !== 'range') {
+    if (e.key === 'Escape') e.target.blur();
+    if (e.key === 'Enter' || e.key === 'ArrowDown') { e.target.blur(); $('grid').focus(); }
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if ($('help').classList.contains('open')) { $('help').classList.remove('open'); e.preventDefault(); return; }
+  const k = e.key;
+  if (k === '?') { $('help').classList.add('open'); return; }
+  if (V.classList.contains('open')) {
+    const map = {
+      ArrowRight: () => show(st.cur + 1), ArrowDown: () => show(st.cur + 1), PageDown: () => show(st.cur + 1), ' ': () => show(st.cur + 1),
+      ArrowLeft: () => show(st.cur - 1), ArrowUp: () => show(st.cur - 1), PageUp: () => show(st.cur - 1), Backspace: () => show(st.cur - 1),
+      Home: () => show(0), End: () => show(st.items.length - 1), Escape: () => closeViewer(), Enter: () => closeViewer(),
+      '+': () => zoomAt(1.25), '=': () => zoomAt(1.25), '-': () => zoomAt(0.8), '0': fitImage, '1': () => actual(),
+      r: () => rotate(90), R: () => rotate(90), l: () => rotate(-90), L: () => rotate(-90),
+      i: () => $('vinfo').click(), I: () => $('vinfo').click(), t: () => $('vstrip').click(), T: () => $('vstrip').click(),
+      f: toggleFull, F: toggleFull, s: () => toggleSlide(), S: () => toggleSlide(),
+    };
+    if (map[k]) { e.preventDefault(); map[k](); }
+    return;
+  }
+  const n = st.items.length, cols = gridCols();
+  const map = {
+    ArrowRight: () => select(st.sel + 1), ArrowLeft: () => select(st.sel - 1),
+    ArrowDown: () => select(st.sel + cols), ArrowUp: () => select(st.sel - cols),
+    PageDown: () => select(st.sel + cols * 4), PageUp: () => select(st.sel - cols * 4),
+    Home: () => select(0), End: () => select(n - 1),
+    Enter: () => n && openViewer(Math.max(0, st.sel)), ' ': () => n && openViewer(Math.max(0, st.sel)),
+    Backspace: () => { if (st.data.path !== '/') location.href = '../?gallery'; },
+    s: () => $('slide').click(), S: () => $('slide').click(),
+    '/': () => $('filter').focus(),
+  };
+  if (map[k]) { e.preventDefault(); map[k](); }
+});
+
+load();
+$('grid').focus();
+})();
+</script>
+</body>
+</html>

@@ -145,6 +145,25 @@ echo '{"users": {"admin": "secret", "user": "pass"}}' > auth.json
 ./stf -gzip-types "text/html application/json"
 ```
 
+#### Photo Browser (Gallery)
+
+Every directory can be opened in a built-in, ACDSee-style photo browser — no extra flags,
+the page is embedded in the binary. The plain listing shows a **Gallery (N)** link when the
+folder contains images, or append `?gallery` to any directory URL:
+
+```bash
+./stf -d ~/Pictures
+open "http://localhost:30000/?gallery"
+```
+
+- Thumbnail grid with folder pane, breadcrumbs, natural sort (name/date/size), filter, adjustable thumbnail size
+- Viewer: fit / 1:1 / wheel & pinch zoom, drag to pan, rotate, filmstrip, properties panel, slideshow, full screen
+- Keyboard: arrows, Enter, Space/PgUp/PgDn, Home/End, `+`/`-`/`0`/`1`, `R`, `I`, `T`, `F`, `S`, Esc, Backspace (press `?` in the page)
+- Deep links: `/photos/?gallery#view=IMG_0001.jpg`; browser Back closes the viewer
+- Server-side thumbnails: `<image>?thumb=256` returns a JPEG (longest edge 32–1600, EXIF orientation applied,
+  128 MB in-memory LRU, ETag/304). JPEG/PNG/GIF/WebP/BMP are thumbnailed; SVG/AVIF/HEIC fall back to the original
+- `?gallery=json` returns the folder listing as JSON; `-noindex` disables the gallery like the listing
+
 ### SOCKS5 Proxy Mode
 
 STF provides a full-featured SOCKS5 proxy server with authentication and rate limiting.

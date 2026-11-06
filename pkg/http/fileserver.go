@@ -607,6 +607,10 @@ func serveFileWithOptions(w http.ResponseWriter, r *http.Request, fs FileSystem,
 			http.Error(w, "403 Forbidden", http.StatusForbidden)
 			return
 		}
+		if r.URL.Query().Has("gallery") {
+			serveGallery(w, r, f)
+			return
+		}
 		if checkIfModifiedSince(w, r, d.ModTime()) == condFalse {
 			writeNotModified(w)
 			return
@@ -620,6 +624,13 @@ func serveFileWithOptions(w http.ResponseWriter, r *http.Request, fs FileSystem,
 	if IsMarkdownFile(name) {
 		ServeMarkdown(w, r, f, name, d.ModTime())
 		return
+	}
+
+	// ?thumb=N on an image returns a downscaled JPEG (falls back to original)
+	if r.URL.Query().Has("thumb") && IsImageFile(name) {
+		if serveThumb(w, r, f, name, d) {
+			return
+		}
 	}
 
 	// serveContent will check modification time

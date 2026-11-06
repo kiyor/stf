@@ -74,7 +74,7 @@ const (
       {{if .BackUrl}}<a href="{{.BackUrl}}"><h1> &lt; </h1></a>{{end}}
     </div>
     <div class="col-9">
-      <h1>{{.Title}}</h1>
+      <h1>{{.Title}}{{if .Images}} <a href="?gallery" title="Open photo browser" style="font-size:.5em;vertical-align:middle"><i class="fa fa-picture-o" aria-hidden="true"></i> Gallery ({{.Images}})</a>{{end}}</h1>
     </div>
     <div class="col-2">
       <form action="{{.Url}}" method="get" class="bd-search hidden-sm-down">
@@ -128,6 +128,7 @@ type Page struct {
 	Key     string
 	BackUrl string
 	Desc    string
+	Images  int
 }
 
 type PageFile struct {
@@ -228,6 +229,9 @@ func dirList1(w http.ResponseWriter, f http.File, r *http.Request) {
 	for _, d := range dirs {
 		var f PageFile
 		f.Name = d.Name()
+		if !d.IsDir() && IsImageFile(f.Name) && !strings.HasPrefix(f.Name, ".") {
+			page.Images++
+		}
 		if d.IsDir() {
 			f.Name += "/"
 			f.Icon = `<i class="fa fa-folder-open-o" aria-hidden="true"></i>`
